@@ -1,19 +1,23 @@
 /**
  * Alta de personal - Sanchoyjote S.L.
  *
- * Arma las dos fichas que hoy se rellenan a mano para cada trabajador nuevo:
- * la del modelo de la gestoría y la del importador de Holded. Los datos
- * salen del Sheet de respuestas del formulario que rellena el personal, y lo
- * que ese formulario no cubre (todo lo del contrato) se completa a mano
- * antes de generar nada.
+ * Un alta se llena en dos tandas y desde dos sitios distintos:
  *
- * Las dos funciones son independientes: se puede generar la ficha de la
- * gestoría sin tocar Holded, y al revés.
+ *   1. El panel de RRHH. Se abre un alta con lo poco que llegue —muchas
+ *      veces el jefe pide el alta por WhatsApp con un nombre y una foto del
+ *      DNI— y se completan los datos del contrato, que ningún trabajador
+ *      conoce ni tiene por qué conocer.
+ *   2. El formulario del trabajador. Se le manda un enlace propio y él
+ *      rellena sus datos personales y sube su documento de identidad, que
+ *      va directo a su carpeta.
  *
- * CAMPOS es la única fuente de verdad. De ahí salen los campos que dibuja el
- * formulario, el orden de la ficha de la gestoría, las columnas del
- * importador de Holded y los nombres que se intentan reconocer en el Sheet
- * de respuestas.
+ * Los dos escriben en la misma fila de la hoja "Trabajadores". No hay que
+ * esperar a tener todo para empezar: la ficha de la gestoría se puede
+ * generar en cuanto haya lo suyo, aunque falte lo de Holded.
+ *
+ * CAMPOS es la única fuente de verdad. De ahí salen los dos formularios, las
+ * columnas de la hoja, el orden de la ficha de la gestoría y las columnas
+ * del importador de Holded.
  */
 
 // ---------------------------------------------------------------------
@@ -22,30 +26,34 @@
 // El ID es el trozo largo de la URL:
 //   hoja    -> docs.google.com/spreadsheets/d/ESTO_ES_EL_ID/edit
 //   carpeta -> drive.google.com/drive/folders/ESTO_ES_EL_ID
-//
-// La clave de la API de Holded NO va aquí: se guarda en las propiedades del
-// script para que no acabe en el repositorio. Se carga una sola vez desde el
-// editor de Apps Script ejecutando guardarClaveHolded('...'), o desde
-// Configuración del proyecto > Propiedades del script, con el nombre
-// HOLDED_API_KEY.
 // ---------------------------------------------------------------------
 
-// Sheet donde caen las respuestas del formulario que rellena el personal.
-const RESPUESTAS_ID = '1zCq_AnPsuLf-h9AaEsjowAacFtGzdMCPKSC8gEFbhkw';
+// Quién puede abrir el panel de RRHH. Todo lo demás que no sea el
+// formulario del trabajador queda cerrado para el resto del mundo: la hoja
+// tiene DNI, números de la Seguridad Social y cuentas bancarias.
+const ADMINS = [
+  'milagros.gamboa@motickfamily.com',
+];
 
-// Pestaña de ese Sheet. Vacío = la primera.
-const RESPUESTAS_HOJA = '';
+// Carpeta de Drive de RRHH, donde vive la hoja maestra y donde se crea una
+// subcarpeta por trabajador. Vacío = se busca (o se crea) una carpeta
+// llamada "Alta de personal" en la unidad de la cuenta que despliega.
+const CARPETA_RRHH_ID = '';
 
-// Carpeta de Drive donde se crea una subcarpeta por trabajador.
-// Vacío = se busca (o se crea) "Alta de personal Gestoría" en la unidad de
-// la cuenta que despliega el script.
-const CARPETA_EMPLEADOS_ID = '';
+// Hoja maestra. Vacío = se busca (o se crea) "Alta de personal" dentro de
+// la carpeta de arriba. Conviene fijarlo aquí en cuanto exista.
+const MAESTRO_ID = '';
 
-// Sheet donde se acumulan las filas del importador de Holded, para exportar
-// el lote del mes. Vacío = se crea "Altas Holded" dentro de esa carpeta.
-const HOJA_HOLDED_ID = '';
+const HOJA_TRABAJADORES = 'Trabajadores';
+const HOJA_LOTE_HOLDED = 'Lote Holded';
 
-const HOJA_HOLDED_PESTANA = 'Holded';
+// Sheet viejo, el de las respuestas del Google Form que se usaba antes.
+// Solo se lee una vez, con importarRespuestasAntiguas().
+const RESPUESTAS_ANTIGUAS_ID = '1zCq_AnPsuLf-h9AaEsjowAacFtGzdMCPKSC8gEFbhkw';
+
+// Correo al que avisar cuando un trabajador termina de rellenar lo suyo.
+// Vacío = no se manda ningún aviso.
+const AVISAR_A = '';
 
 // ---------------------------------------------------------------------
 // CENTROS DE TRABAJO
@@ -81,60 +89,58 @@ const TIPOS_CONTRATO = ['Indefinido', 'Temporal'];
 // ---------------------------------------------------------------------
 // CAMPOS
 //
-// clave     : nombre interno, el que viaja entre el formulario y el servidor.
-// etiqueta  : lo que se lee en el formulario.
-// grupo     : 'personal' se precarga del Sheet; 'contrato' se rellena a mano
-//             porque el formulario del personal no lo pregunta.
-// tipo      : texto | fecha | numero | lista | area
-// opciones  : para tipo 'lista'.
-// sinonimos : encabezados del Sheet de respuestas que se aceptan como este
-//             campo. Se comparan sin acentos, sin mayúsculas y sin signos, y
-//             basta con que el encabezado los contenga. Es solo la propuesta
-//             inicial: el mapeo definitivo se guarda desde la pestaña
-//             "Columnas" del formulario.
-// holded    : encabezado exacto de la columna del importador de Holded, o
-//             null si Holded no pide ese dato.
+// clave      : nombre interno. Es también el nombre de la columna en la hoja.
+// etiqueta   : lo que se lee en el formulario y el encabezado de la columna.
+// grupo      : 'personal' lo rellena el trabajador; 'contrato' solo RRHH.
+//              Lo del contrato no aparece nunca en el formulario del
+//              trabajador: ahí va el salario.
+// tipo       : texto | fecha | numero | lista | area
+// opciones   : para tipo 'lista'.
+// ayuda      : aclaración bajo el campo, para el trabajador.
+// opcional   : no se le reclama al trabajador para dar el alta por completa.
+// soloNoResidente : solo se enseña y se manda si la residencia fiscal lo pide.
+// interno    : no se dibuja en ningún formulario. Existe para guardar cosas
+//              como el enlace del documento que traían las respuestas viejas.
+// sinonimos  : encabezados que se aceptan al importar las respuestas viejas.
+// holded     : encabezado exacto del importador de Holded, o null.
 // ---------------------------------------------------------------------
 const CAMPOS = [
   { clave: 'nombre', etiqueta: 'Nombre', grupo: 'personal', tipo: 'texto',
     sinonimos: ['nombre'], holded: 'Nombre' },
   { clave: 'apellidos', etiqueta: 'Apellidos', grupo: 'personal', tipo: 'texto',
     sinonimos: ['apellidos', 'apellido'], holded: 'Apellidos' },
-  { clave: 'dni', etiqueta: 'DNI / NIE', grupo: 'personal', tipo: 'texto',
+  { clave: 'dni', etiqueta: 'Número de identificación (DNI/NIE)', grupo: 'personal', tipo: 'texto',
     sinonimos: ['dni', 'nie', 'documento de identidad', 'identificacion fiscal'],
     holded: 'Núm. identificación fiscal' },
-  // El trabajador sube su documento en el propio formulario y el Sheet
-  // guarda el enlace de Drive. Con eso, la herramienta se copia el archivo
-  // sola y no hay que adjuntarlo a mano.
-  { clave: 'documentoUrl', etiqueta: 'Documento de identidad subido por el trabajador', grupo: 'personal', tipo: 'texto',
-    sinonimos: ['documento de identificacion', 'documento identidad', 'adjunto'],
-    holded: null },
   { clave: 'fechaNacimiento', etiqueta: 'Fecha de nacimiento', grupo: 'personal', tipo: 'fecha',
     sinonimos: ['fecha de nacimiento', 'nacimiento'],
     holded: 'Fecha nacimiento (dd/mm/aaaa)' },
-  { clave: 'naf', etiqueta: 'Número de afiliación a la Seguridad Social', grupo: 'personal', tipo: 'texto',
+  { clave: 'naf', etiqueta: 'Número de la Seguridad Social', grupo: 'personal', tipo: 'texto',
+    ayuda: 'Los 12 dígitos que aparecen en tu documento de afiliación.',
     sinonimos: ['afiliacion', 'naf', 'seguridad social'],
     holded: 'Número Seguridad Social' },
   { clave: 'nivelFormativo', etiqueta: 'Nivel formativo', grupo: 'personal', tipo: 'lista',
-    opciones: NIVELES_FORMATIVOS,
+    opciones: NIVELES_FORMATIVOS, ayuda: 'El último nivel que completaste.',
     sinonimos: ['nivel formativo', 'estudios', 'formacion'], holded: null },
   { clave: 'nacionalidad', etiqueta: 'Nacionalidad', grupo: 'personal', tipo: 'texto',
     sinonimos: ['nacionalidad'], holded: 'Nacionalidad' },
   { clave: 'genero', etiqueta: 'Género', grupo: 'personal', tipo: 'lista',
     opciones: ['Hombre', 'Mujer'],
     sinonimos: ['genero', 'sexo'], holded: 'Género (1: Hombre, 0: Mujer)' },
-  { clave: 'email', etiqueta: 'Email', grupo: 'personal', tipo: 'texto',
+  { clave: 'email', etiqueta: 'Correo electrónico', grupo: 'personal', tipo: 'texto',
     sinonimos: ['email', 'correo'], holded: 'Email' },
-  { clave: 'telefono', etiqueta: 'Teléfono', grupo: 'personal', tipo: 'texto',
-    sinonimos: ['telefono fijo', 'telefono'], holded: 'Teléfono' },
+  { clave: 'telefono', etiqueta: 'Teléfono fijo', grupo: 'personal', tipo: 'texto',
+    opcional: true, sinonimos: ['telefono fijo'], holded: 'Teléfono' },
   { clave: 'movil', etiqueta: 'Móvil', grupo: 'personal', tipo: 'texto',
     sinonimos: ['movil', 'celular', 'whatsapp'], holded: 'Móvil' },
   { clave: 'cuentaBancaria', etiqueta: 'Número de cuenta bancaria (IBAN)', grupo: 'personal', tipo: 'texto',
+    ayuda: 'Donde quieres cobrar la nómina. Empieza por ES.',
     sinonimos: ['cuenta bancaria', 'iban', 'cuenta'],
     holded: 'Número de cuenta bancaria' },
-  { clave: 'calle', etiqueta: 'Calle y número', grupo: 'personal', tipo: 'texto',
+  { clave: 'calle', etiqueta: 'Dirección', grupo: 'personal', tipo: 'texto',
+    ayuda: 'Calle, número, piso y puerta.',
     sinonimos: ['calle', 'direccion', 'domicilio'], holded: 'Dirección' },
-  { clave: 'municipio', etiqueta: 'Municipio', grupo: 'personal', tipo: 'texto',
+  { clave: 'municipio', etiqueta: 'Población', grupo: 'personal', tipo: 'texto',
     sinonimos: ['municipio', 'poblacion', 'ciudad'], holded: 'Población' },
   { clave: 'codigoPostal', etiqueta: 'Código postal', grupo: 'personal', tipo: 'texto',
     sinonimos: ['codigo postal', 'cp'], holded: 'Código postal' },
@@ -149,12 +155,13 @@ const CAMPOS = [
     sinonimos: ['pais de nacimiento'], holded: 'País de nacimiento' },
   { clave: 'residenciaFiscal', etiqueta: 'Residencia fiscal', grupo: 'personal', tipo: 'lista',
     opciones: ['Residente', 'No residente'],
+    ayuda: 'Residente si vives y tributas en España, que es lo habitual.',
     sinonimos: ['residencia fiscal', 'residente'],
     holded: 'Residencia fiscal (1: Residente, 0: No residente)' },
 
   // Bloque de no residente. Holded lo rechaza si llega relleno con
-  // residencia fiscal 1, así que se vacía solo cuando no corresponde y el
-  // formulario ni siquiera lo enseña.
+  // residencia fiscal 1, así que se vacía solo cuando no corresponde y los
+  // formularios ni siquiera lo enseñan.
   { clave: 'direccionNoResidente', etiqueta: 'Dirección (no residente)', grupo: 'personal', tipo: 'texto',
     soloNoResidente: true, sinonimos: ['direccion no residente'],
     holded: 'Dirección No residente' },
@@ -177,6 +184,11 @@ const CAMPOS = [
     soloNoResidente: true, sinonimos: ['fin de situacion no residente'],
     holded: 'Fin de situación no-residente' },
 
+  { clave: 'documentoUrl', etiqueta: 'Enlace del documento (respuestas antiguas)', grupo: 'personal',
+    tipo: 'texto', interno: true,
+    sinonimos: ['documento de identificacion', 'documento identidad', 'adjunto'],
+    holded: null },
+
   { clave: 'tipoContrato', etiqueta: 'Tipo de contrato', grupo: 'contrato', tipo: 'lista',
     opciones: TIPOS_CONTRATO, sinonimos: [], holded: null },
   { clave: 'fechaInicio', etiqueta: 'Fecha de inicio (alta)', grupo: 'contrato', tipo: 'fecha',
@@ -198,8 +210,17 @@ const CAMPOS = [
     sinonimos: [], holded: null },
 ];
 
-// Campos sin los que no se genera nada.
+// Columnas de control de la hoja "Trabajadores", antes de las de CAMPOS.
+const COLUMNAS_CONTROL = [
+  'Token', 'Estado', 'Creado', 'Actualizado', 'Ficha gestoría', 'Holded',
+  'Carpeta', 'Carpeta ID', 'Documento',
+];
+
+// Sin esto no se puede ni abrir un alta.
+const OBLIGATORIOS_ALTA = ['nombre', 'apellidos'];
+// Sin esto la gestoría no puede tramitar.
 const OBLIGATORIOS_GESTORIA = ['nombre', 'apellidos', 'dni', 'fechaInicio', 'ocupacion', 'sede'];
+// Mínimo que acepta el importador de Holded.
 const OBLIGATORIOS_HOLDED = ['nombre', 'apellidos', 'dni'];
 
 // Orden exacto del modelo de la gestoría, fila por fila.
@@ -239,266 +260,488 @@ const COLUMNAS_HOLDED = [
   'Ciudad de nacimiento', 'País de nacimiento', 'Fin de situación no-residente',
 ];
 
-const PROP_MAPEO = 'MAPEO_COLUMNAS';
 const PROP_CLAVE_HOLDED = 'HOLDED_API_KEY';
 
 
 // =====================================================================
-// FORMULARIO
+// ENTRADA
+//
+// La misma dirección sirve para las dos cosas. Con ?t=<token> se abre el
+// formulario del trabajador; sin nada, el panel de RRHH.
 // =====================================================================
 
-function doGet() {
+function doGet(e) {
+  const token = e && e.parameter ? e.parameter.t : '';
+
+  if (token) {
+    const fila = buscarFila(token);
+    if (!fila) return paginaSimple('Enlace no válido',
+      'Este enlace ya no sirve. Pide uno nuevo a Recursos Humanos.');
+
+    const plantilla = HtmlService.createTemplateFromFile('Trabajador');
+    plantilla.config = JSON.stringify({
+      campos: camposDelTrabajador(),
+      token: token,
+      datos: fila.datos,
+    });
+    return plantilla.evaluate()
+      .setTitle('Tus datos - Sanchoyjote')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
+
+  if (!esAdmin()) {
+    return paginaSimple('Acceso restringido',
+      'Este panel es solo para Recursos Humanos. Si eres un trabajador, ' +
+      'usa el enlace personal que te enviaron.');
+  }
+
   const plantilla = HtmlService.createTemplateFromFile('Index');
   plantilla.config = JSON.stringify({
-    campos: CAMPOS,
+    campos: CAMPOS.filter(function (c) { return !c.interno; }),
     centros: CENTROS,
-    fichaGestoria: FICHA_GESTORIA,
+    obligatoriosAlta: OBLIGATORIOS_ALTA,
     obligatoriosGestoria: OBLIGATORIOS_GESTORIA,
     obligatoriosHolded: OBLIGATORIOS_HOLDED,
   });
-  return plantilla
-    .evaluate()
+  return plantilla.evaluate()
     .setTitle('Alta de personal')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+function paginaSimple(titulo, texto) {
+  return HtmlService.createHtmlOutput(
+    '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;' +
+    'max-width:480px;margin:60px auto;padding:24px;text-align:center;color:#1a1a1a">' +
+    '<h1 style="font-size:20px">' + titulo + '</h1>' +
+    '<p style="color:#555;line-height:1.6">' + texto + '</p></div>'
+  ).setTitle(titulo);
+}
+
 
 // =====================================================================
-// LECTURA DEL SHEET DE RESPUESTAS
+// SEGURIDAD
+//
+// La aplicación se publica abierta para que el enlace del trabajador
+// funcione sin que él tenga cuenta de Google. Por eso todo lo del panel
+// comprueba quién llama, y todo lo del trabajador exige su token y solo
+// toca su propia fila.
 // =====================================================================
+
+function esAdmin() {
+  const correo = Session.getActiveUser().getEmail();
+  return !!correo && ADMINS.indexOf(correo) !== -1;
+}
+
+function soloAdmin() {
+  if (!esAdmin()) {
+    throw new Error('Esta acción es solo para Recursos Humanos.');
+  }
+}
 
 /**
- * Devuelve la lista de trabajadores del Sheet de respuestas, de la más
- * reciente a la más antigua. Solo lo necesario para elegir en el desplegable.
+ * Para depurar el acceso. Si devuelve el correo vacío, el panel no se puede
+ * abrir y hay que revisar cómo está implementada la aplicación.
  */
-function listarTrabajadores() {
-  const datos = leerRespuestas();
-  const mapeo = obtenerMapeo();
+function quienSoy() {
+  const correo = Session.getActiveUser().getEmail();
+  Logger.log('Correo visto por el script: "' + correo + '" | admin: ' + esAdmin());
+  return correo;
+}
 
-  const lista = datos.filas.map(function (fila, i) {
-    const valores = valoresDeFila(fila, datos.encabezados, mapeo);
-    const nombre = [valores.nombre, valores.apellidos].filter(String).join(' ').trim();
-    return {
-      fila: i + 2,  // +1 por el encabezado, +1 porque las filas empiezan en 1
-      etiqueta: nombre || '(sin nombre en la fila ' + (i + 2) + ')',
-      dni: valores.dni || '',
-    };
+
+// =====================================================================
+// HOJA MAESTRA
+// =====================================================================
+
+function carpetaRaiz() {
+  if (CARPETA_RRHH_ID) return DriveApp.getFolderById(CARPETA_RRHH_ID);
+  const existentes = DriveApp.getFoldersByName('Alta de personal');
+  return existentes.hasNext() ? existentes.next() : DriveApp.createFolder('Alta de personal');
+}
+
+function libroMaestro() {
+  if (MAESTRO_ID) return SpreadsheetApp.openById(MAESTRO_ID);
+
+  const carpeta = carpetaRaiz();
+  const existentes = carpeta.getFilesByName('Alta de personal');
+  if (existentes.hasNext()) return SpreadsheetApp.open(existentes.next());
+
+  const libro = SpreadsheetApp.create('Alta de personal');
+  const archivo = DriveApp.getFileById(libro.getId());
+  carpeta.addFile(archivo);
+  DriveApp.getRootFolder().removeFile(archivo);
+  return libro;
+}
+
+/**
+ * Encabezados de la hoja "Trabajadores": las columnas de control y luego una
+ * por campo. Un campo nuevo en CAMPOS aparece como columna nueva al final,
+ * sin tocar las que ya tienen datos.
+ */
+function encabezadosMaestro() {
+  return COLUMNAS_CONTROL.concat(CAMPOS.map(function (c) { return c.etiqueta; }));
+}
+
+function hojaTrabajadores() {
+  const libro = libroMaestro();
+  let hoja = libro.getSheetByName(HOJA_TRABAJADORES);
+  if (!hoja) {
+    hoja = libro.insertSheet(HOJA_TRABAJADORES);
+    if (libro.getSheets()[0].getName() === 'Hoja 1' || libro.getSheets()[0].getName() === 'Sheet1') {
+      libro.deleteSheet(libro.getSheets()[0]);
+    }
+  }
+
+  const esperados = encabezadosMaestro();
+  if (hoja.getLastColumn() === 0) {
+    hoja.getRange(1, 1, 1, esperados.length).setValues([esperados]).setFontWeight('bold');
+    hoja.setFrozenRows(1);
+    hoja.setFrozenColumns(2);
+  } else {
+    const actuales = hoja.getRange(1, 1, 1, hoja.getLastColumn()).getValues()[0]
+      .map(function (v) { return String(v).trim(); });
+    const nuevos = esperados.filter(function (e) { return actuales.indexOf(e) === -1; });
+    if (nuevos.length) {
+      hoja.getRange(1, actuales.length + 1, 1, nuevos.length)
+        .setValues([nuevos]).setFontWeight('bold');
+    }
+  }
+  return hoja;
+}
+
+function indicesDe(hoja) {
+  const encabezados = hoja.getRange(1, 1, 1, hoja.getLastColumn()).getValues()[0];
+  const indices = {};
+  encabezados.forEach(function (encabezado, i) {
+    indices[String(encabezado).trim()] = i;
   });
+  return indices;
+}
+
+/** Devuelve { hoja, numeroFila, indices, datos } o null. */
+function buscarFila(token) {
+  const hoja = hojaTrabajadores();
+  if (hoja.getLastRow() < 2) return null;
+
+  const indices = indicesDe(hoja);
+  const filas = hoja.getRange(2, 1, hoja.getLastRow() - 1, hoja.getLastColumn()).getValues();
+
+  for (let i = 0; i < filas.length; i++) {
+    if (String(filas[i][indices['Token']]).trim() === String(token).trim()) {
+      return {
+        hoja: hoja,
+        numeroFila: i + 2,
+        indices: indices,
+        datos: filaAObjeto(filas[i], indices),
+      };
+    }
+  }
+  return null;
+}
+
+function filaAObjeto(fila, indices) {
+  const objeto = {};
+  COLUMNAS_CONTROL.forEach(function (columna) {
+    objeto[columna] = textoDeCelda(fila[indices[columna]]);
+  });
+  CAMPOS.forEach(function (campo) {
+    const i = indices[campo.etiqueta];
+    objeto[campo.clave] = i === undefined ? '' : textoDeCelda(fila[i], campo);
+  });
+  return objeto;
+}
+
+function textoDeCelda(valor, campo) {
+  if (valor === null || valor === undefined) return '';
+  if (valor instanceof Date) {
+    return campo && campo.tipo === 'fecha'
+      ? Utilities.formatDate(valor, 'Europe/Madrid', 'yyyy-MM-dd')
+      : Utilities.formatDate(valor, 'Europe/Madrid', 'yyyy-MM-dd HH:mm');
+  }
+  return String(valor).trim();
+}
+
+function escribirCeldas(fila, valores) {
+  Object.keys(valores).forEach(function (columna) {
+    const i = fila.indices[columna];
+    if (i !== undefined) fila.hoja.getRange(fila.numeroFila, i + 1).setValue(valores[columna]);
+  });
+}
+
+/**
+ * Qué le falta al trabajador por rellenar. Es lo que decide el estado y lo
+ * que se le muestra a RRHH para saber a quién hay que reclamarle.
+ */
+function loQueFalta(datos) {
+  const esResidente = datos.residenciaFiscal !== 'No residente';
+  return CAMPOS.filter(function (campo) {
+    if (campo.grupo !== 'personal' || campo.interno || campo.opcional) return false;
+    if (campo.soloNoResidente && esResidente) return false;
+    return !String(datos[campo.clave] || '').trim();
+  }).map(function (campo) { return campo.etiqueta; });
+}
+
+function estadoDe(datos) {
+  const faltan = loQueFalta(datos);
+  if (!faltan.length) return 'Completo';
+  return 'Faltan ' + faltan.length + ' datos del trabajador';
+}
+
+function camposDelTrabajador() {
+  return CAMPOS.filter(function (campo) {
+    return campo.grupo === 'personal' && !campo.interno;
+  });
+}
+
+
+// =====================================================================
+// PANEL DE RRHH
+// =====================================================================
+
+function listarAltas() {
+  soloAdmin();
+  const hoja = hojaTrabajadores();
+  if (hoja.getLastRow() < 2) return [];
+
+  const indices = indicesDe(hoja);
+  const filas = hoja.getRange(2, 1, hoja.getLastRow() - 1, hoja.getLastColumn()).getValues();
+
+  const lista = filas.map(function (fila) {
+    const datos = filaAObjeto(fila, indices);
+    return {
+      token: datos['Token'],
+      etiqueta: [datos.nombre, datos.apellidos].filter(String).join(' ').trim() ||
+        '(sin nombre)',
+      dni: datos.dni,
+      estado: datos['Estado'],
+      fichaGenerada: !!datos['Ficha gestoría'],
+      enHolded: !!datos['Holded'],
+    };
+  }).filter(function (t) { return t.token; });
 
   lista.reverse();
   return lista;
 }
 
 /**
- * Trae una fila del Sheet ya traducida a claves internas, lista para
- * precargar el formulario.
+ * Abre un alta con lo que haya. Basta el nombre: el resto puede llegar
+ * después, del propio trabajador o de un mensaje del jefe.
  */
-function cargarTrabajador(numeroFila) {
-  const datos = leerRespuestas();
-  const fila = datos.filas[numeroFila - 2];
-  if (!fila) {
-    throw new Error('La fila ' + numeroFila + ' ya no existe en el Sheet de respuestas.');
-  }
-  return valoresDeFila(fila, datos.encabezados, obtenerMapeo());
+function crearAlta(datos) {
+  soloAdmin();
+  validar(datos, OBLIGATORIOS_ALTA);
+
+  const hoja = hojaTrabajadores();
+  const indices = indicesDe(hoja);
+  const token = Utilities.getUuid();
+  const ahora = new Date();
+
+  const nombreCarpeta = String(datos.carpeta || '').trim() || nombreCarpetaPropuesto(datos);
+  const carpeta = carpetaDelTrabajador(nombreCarpeta);
+
+  const valores = new Array(hoja.getLastColumn()).fill('');
+  valores[indices['Token']] = token;
+  valores[indices['Creado']] = ahora;
+  valores[indices['Actualizado']] = ahora;
+  valores[indices['Carpeta']] = carpeta.getName();
+  valores[indices['Carpeta ID']] = carpeta.getId();
+  CAMPOS.forEach(function (campo) {
+    const i = indices[campo.etiqueta];
+    if (i !== undefined) valores[i] = datos[campo.clave] || '';
+  });
+  valores[indices['Estado']] = estadoDe(datos);
+
+  hoja.appendRow(valores);
+  return { token: token, enlace: enlaceDelTrabajador(token), carpeta: carpeta.getName() };
 }
 
-function leerRespuestas() {
-  if (!RESPUESTAS_ID) {
-    throw new Error('Falta configurar RESPUESTAS_ID en Code.gs.');
-  }
-  const libro = SpreadsheetApp.openById(RESPUESTAS_ID);
-  const hoja = RESPUESTAS_HOJA ? libro.getSheetByName(RESPUESTAS_HOJA) : libro.getSheets()[0];
-  if (!hoja) {
-    throw new Error('No existe la pestaña "' + RESPUESTAS_HOJA + '" en el Sheet de respuestas.');
-  }
-  if (hoja.getLastRow() < 2) {
-    return { encabezados: [], filas: [] };
-  }
-  const rango = hoja.getRange(1, 1, hoja.getLastRow(), hoja.getLastColumn()).getValues();
+function cargarAlta(token) {
+  soloAdmin();
+  const fila = buscarFila(token);
+  if (!fila) throw new Error('Ese alta ya no existe.');
   return {
-    encabezados: rango[0].map(function (e) { return String(e).trim(); }),
-    filas: rango.slice(1),
+    datos: fila.datos,
+    falta: loQueFalta(fila.datos),
+    enlace: enlaceDelTrabajador(token),
   };
 }
 
-/**
- * Traduce una fila del Sheet a un objeto con las claves de CAMPOS, usando el
- * mapeo de columnas. Los campos del grupo 'contrato' salen vacíos: no están
- * en el formulario del personal.
- */
-function valoresDeFila(fila, encabezados, mapeo) {
-  const valores = {};
+/** Guarda los cambios que hace RRHH. Puede tocar todos los campos. */
+function guardarAlta(token, datos) {
+  soloAdmin();
+  const fila = buscarFila(token);
+  if (!fila) throw new Error('Ese alta ya no existe.');
+
+  const fusionados = {};
   CAMPOS.forEach(function (campo) {
-    const encabezado = mapeo[campo.clave];
-    if (!encabezado) {
-      valores[campo.clave] = '';
-      return;
-    }
-    const i = encabezados.indexOf(encabezado);
-    valores[campo.clave] = i === -1 ? '' : normalizarValor(fila[i], campo);
+    fusionados[campo.clave] = datos[campo.clave] !== undefined
+      ? datos[campo.clave]
+      : fila.datos[campo.clave];
   });
-  return valores;
-}
 
-function normalizarValor(valor, campo) {
-  if (valor === null || valor === undefined || valor === '') return '';
-  if (campo.tipo === 'fecha') {
-    const fecha = valor instanceof Date ? valor : new Date(valor);
-    return isNaN(fecha.getTime()) ? String(valor).trim() : Utilities.formatDate(fecha, 'Europe/Madrid', 'yyyy-MM-dd');
+  const celdas = { 'Actualizado': new Date(), 'Estado': estadoDe(fusionados) };
+  CAMPOS.forEach(function (campo) { celdas[campo.etiqueta] = fusionados[campo.clave]; });
+
+  const nombreCarpeta = String(datos.carpeta || '').trim();
+  if (nombreCarpeta && nombreCarpeta !== fila.datos['Carpeta']) {
+    const carpeta = DriveApp.getFolderById(fila.datos['Carpeta ID']);
+    carpeta.setName(nombreCarpeta);
+    celdas['Carpeta'] = nombreCarpeta;
   }
-  const texto = String(valor).trim();
-  if (campo.tipo === 'lista' && campo.opciones) {
-    return opcionEquivalente(texto, campo.opciones) || texto;
-  }
-  return texto;
+
+  escribirCeldas(fila, celdas);
+  return { falta: loQueFalta(fusionados), estado: celdas['Estado'] };
 }
 
 /**
- * Empareja lo que respondió el trabajador con la opción del catálogo. Las
- * respuestas llegan con el número delante ("1- Residente") o sin él, y el
- * catálogo lo lleva en otro formato ("4 - Educación secundaria obligatoria
- * (ESO)"), así que se compara sin ese prefijo.
- *
- * Gana la opción más larga que aparezca dentro del texto: si no, "0- No
- * residente" se quedaría en "Residente", que es justo lo contrario.
+ * Guarda en la carpeta del trabajador lo que llegue por WhatsApp: la foto
+ * del DNI, un contrato firmado, lo que sea. El documento de identidad se
+ * renombra para que todas las carpetas se lean igual; el resto conserva su
+ * nombre.
  */
-function opcionEquivalente(texto, opciones) {
-  const buscado = sinPrefijo(texto);
-  let encontrada = '';
-  let largo = 0;
-  opciones.forEach(function (opcion) {
-    const o = sinPrefijo(opcion);
-    if (o && buscado.indexOf(o) !== -1 && o.length > largo) {
-      encontrada = opcion;
-      largo = o.length;
-    }
-  });
-  return encontrada;
+function subirDocumento(token, archivo, esIdentidad) {
+  soloAdmin();
+  const fila = buscarFila(token);
+  if (!fila) throw new Error('Ese alta ya no existe.');
+
+  const carpeta = DriveApp.getFolderById(fila.datos['Carpeta ID']);
+  const guardado = esIdentidad
+    ? guardarIdentidad(archivo, carpeta, fila.datos['Carpeta'])
+    : carpeta.createFile(blobDe(archivo)).getName();
+
+  const celdas = { 'Actualizado': new Date() };
+  if (esIdentidad) celdas['Documento'] = guardado;
+  escribirCeldas(fila, celdas);
+
+  return { nombre: guardado, carpetaUrl: carpeta.getUrl() };
 }
 
-function sinPrefijo(texto) {
-  return sinAcentos(String(texto).replace(/^\s*\d+\s*[-.)]*\s*/, ''));
+function enlaceDelTrabajador(token) {
+  return ScriptApp.getService().getUrl() + '?t=' + token;
 }
 
 
 // =====================================================================
-// MAPEO DE COLUMNAS
+// FORMULARIO DEL TRABAJADOR
 //
-// El formulario que rellena el personal cambia de encabezados cada vez que
-// alguien lo edita, así que el mapeo no se puede dar por fijo. Se propone
-// uno por sinónimos y se guarda el definitivo en las propiedades del script.
+// Solo toca su propia fila y solo los campos personales: lo del contrato,
+// el salario incluido, ni se le enseña ni se le acepta.
 // =====================================================================
 
-function obtenerEncabezados() {
-  return leerRespuestas().encabezados;
-}
+function guardarDatosTrabajador(token, datos, archivo) {
+  const fila = buscarFila(token);
+  if (!fila) throw new Error('Este enlace ya no sirve. Pide uno nuevo a Recursos Humanos.');
 
-/**
- * Mapeo guardado, completado con la propuesta automática para los campos
- * que nadie ha asignado todavía.
- */
-function obtenerMapeo() {
-  const guardado = PropertiesService.getScriptProperties().getProperty(PROP_MAPEO);
-  const mapeo = guardado ? JSON.parse(guardado) : {};
-  const encabezados = leerRespuestas().encabezados;
-  const automatico = proponerMapeo(encabezados);
-
+  const fusionados = {};
   CAMPOS.forEach(function (campo) {
-    if (mapeo[campo.clave] === undefined) {
-      mapeo[campo.clave] = automatico[campo.clave] || '';
-    }
-    // Un encabezado que ya no existe se descarta: el formulario lo cambió.
-    if (mapeo[campo.clave] && encabezados.indexOf(mapeo[campo.clave]) === -1) {
-      mapeo[campo.clave] = automatico[campo.clave] || '';
-    }
+    const puedeTocarlo = campo.grupo === 'personal' && !campo.interno;
+    fusionados[campo.clave] = puedeTocarlo && datos[campo.clave] !== undefined
+      ? String(datos[campo.clave]).trim()
+      : fila.datos[campo.clave];
   });
-  return mapeo;
+
+  const celdas = { 'Actualizado': new Date(), 'Estado': estadoDe(fusionados) };
+  camposDelTrabajador().forEach(function (campo) {
+    celdas[campo.etiqueta] = fusionados[campo.clave];
+  });
+
+  if (archivo && archivo.datos) {
+    const carpeta = DriveApp.getFolderById(fila.datos['Carpeta ID']);
+    celdas['Documento'] = guardarIdentidad(archivo, carpeta, fila.datos['Carpeta']);
+  }
+
+  escribirCeldas(fila, celdas);
+  avisarDeQueTermino(fusionados, celdas['Estado']);
+
+  return { falta: loQueFalta(fusionados) };
+}
+
+function avisarDeQueTermino(datos, estado) {
+  if (!AVISAR_A || estado !== 'Completo') return;
+  const nombre = [datos.nombre, datos.apellidos].filter(String).join(' ');
+  MailApp.sendEmail(AVISAR_A, 'Alta completa: ' + nombre,
+    nombre + ' terminó de rellenar sus datos. Ya se puede cargar en Holded.');
+}
+
+
+// =====================================================================
+// CARPETA Y DOCUMENTOS
+// =====================================================================
+
+function carpetaDelTrabajador(nombre) {
+  const raiz = carpetaRaiz();
+  const existentes = raiz.getFoldersByName(nombre);
+  return existentes.hasNext() ? existentes.next() : raiz.createFolder(nombre);
+}
+
+function guardarIdentidad(archivo, carpeta, nombreTrabajador) {
+  const extension = (String(archivo.nombre || '').match(/\.[^.]+$/) || ['.jpg'])[0];
+  const nombre = 'DNI - ' + nombreTrabajador + extension;
+
+  const previos = carpeta.getFilesByName(nombre);
+  while (previos.hasNext()) previos.next().setTrashed(true);
+
+  return carpeta.createFile(blobDe(archivo).setName(nombre)).getName();
+}
+
+function blobDe(archivo) {
+  return Utilities.newBlob(
+    Utilities.base64Decode(archivo.datos),
+    archivo.tipo || 'application/octet-stream',
+    archivo.nombre || 'documento'
+  );
 }
 
 /**
- * Propone qué columna del Sheet alimenta cada campo. Gana el sinónimo más
- * largo que aparezca en el encabezado, para que "fecha de nacimiento" no se
- * lleve la columna de "nacimiento" a secas y viceversa.
+ * Propuesta de nombre de carpeta: "Apellido, Nombre". Es solo una propuesta,
+ * el panel la deja editar. Los apellidos compuestos y los nombres de dos
+ * palabras no se pueden adivinar bien, y las carpetas que ya existen tampoco
+ * siguen un patrón único.
  */
-function proponerMapeo(encabezados) {
-  const propuesta = {};
-  const usados = {};
-
-  CAMPOS.forEach(function (campo) {
-    let mejor = '';
-    let mejorPeso = 0;
-    encabezados.forEach(function (encabezado) {
-      if (usados[encabezado]) return;
-      const limpio = sinAcentos(encabezado);
-      campo.sinonimos.forEach(function (sinonimo) {
-        const s = sinAcentos(sinonimo);
-        if (limpio.indexOf(s) !== -1 && s.length > mejorPeso) {
-          mejor = encabezado;
-          mejorPeso = s.length;
-        }
-      });
-    });
-    if (mejor) {
-      propuesta[campo.clave] = mejor;
-      usados[mejor] = true;
-    }
-  });
-  return propuesta;
-}
-
-function guardarMapeo(mapeo) {
-  PropertiesService.getScriptProperties().setProperty(PROP_MAPEO, JSON.stringify(mapeo));
-  return 'Mapeo guardado.';
-}
-
-/**
- * Para la pestaña "Columnas": los encabezados reales del Sheet, el mapeo
- * vigente y qué campos se quedaron sin columna.
- */
-function estadoMapeo() {
-  const encabezados = obtenerEncabezados();
-  const mapeo = obtenerMapeo();
-  const sinAsignar = CAMPOS
-    .filter(function (c) { return c.grupo === 'personal' && !mapeo[c.clave]; })
-    .map(function (c) { return c.etiqueta; });
-  return { encabezados: encabezados, mapeo: mapeo, sinAsignar: sinAsignar };
+function nombreCarpetaPropuesto(datos) {
+  const apellido = String(datos.apellidos || '').trim().split(/\s+/)[0] || '';
+  const nombre = String(datos.nombre || '').trim().split(/\s+/)[0] || '';
+  return [apellido, nombre].filter(String).join(', ');
 }
 
 
 // =====================================================================
 // FUNCIÓN 1 - FICHA DE LA GESTORÍA
+//
+// Se puede generar en cuanto haya lo que la gestoría necesita, aunque el
+// trabajador todavía no haya rellenado lo suyo: son justo las altas que
+// piden con prisa y pocos datos.
 // =====================================================================
 
-/**
- * Crea la carpeta del trabajador, genera la ficha con el formato del modelo
- * y guarda dentro el documento de identidad. No toca Holded.
- *
- * documento: { nombre, tipo, datos } en base64, o null si no se adjunta.
- */
-function generarFichaGestoria(datos, documento) {
-  validar(datos, OBLIGATORIOS_GESTORIA);
+function generarFichaGestoria(token) {
+  soloAdmin();
+  const fila = buscarFila(token);
+  if (!fila) throw new Error('Ese alta ya no existe.');
 
-  const carpeta = carpetaDelTrabajador(datos.carpeta || nombreCarpeta(datos));
-  const completos = conCamposDerivados(datos);
+  validar(fila.datos, OBLIGATORIOS_GESTORIA);
 
+  const carpeta = DriveApp.getFolderById(fila.datos['Carpeta ID']);
+  const completos = conCamposDerivados(fila.datos);
   const archivo = crearFichaXlsx(completos, carpeta);
 
-  // Manda lo que se adjunte a mano: sirve para corregir un documento
-  // ilegible o para las altas que llegan por WhatsApp, donde no hay
-  // respuesta del formulario y por tanto no hay enlace.
-  let docGuardado = '';
-  if (documento && documento.datos) {
-    docGuardado = guardarDocumento(documento, carpeta, completos.carpetaNombre);
-  } else if (datos.documentoUrl) {
-    docGuardado = copiarDocumentoDeDrive(datos.documentoUrl, carpeta, completos.carpetaNombre);
+  // Las respuestas antiguas traían el documento como enlace de Drive, no
+  // como archivo. Se copia ahora, que es cuando hace falta.
+  let documento = fila.datos['Documento'];
+  if (!documento && fila.datos.documentoUrl) {
+    documento = copiarDocumentoDeDrive(fila.datos.documentoUrl, carpeta, fila.datos['Carpeta']);
   }
 
+  escribirCeldas(fila, {
+    'Ficha gestoría': new Date(),
+    'Actualizado': new Date(),
+    'Documento': documento || '',
+  });
+
   return {
-    carpeta: carpeta.getName(),
+    carpeta: fila.datos['Carpeta'],
     carpetaUrl: carpeta.getUrl(),
     ficha: archivo.getName(),
-    fichaUrl: archivo.getUrl(),
-    documento: docGuardado,
+    documento: documento || '',
   };
 }
 
@@ -539,8 +782,8 @@ function crearFichaXlsx(datos, carpeta) {
       throw new Error('No se pudo exportar la ficha a Excel (código ' + respuesta.getResponseCode() + ').');
     }
 
-    // Regenerar la ficha de alguien reemplaza la anterior en vez de dejar
-    // dos archivos casi iguales en la misma carpeta.
+    // Regenerar la ficha reemplaza la anterior en vez de dejar dos archivos
+    // casi iguales en la misma carpeta.
     const previos = carpeta.getFilesByName(nombreArchivo);
     while (previos.hasNext()) previos.next().setTrashed(true);
 
@@ -550,32 +793,14 @@ function crearFichaXlsx(datos, carpeta) {
   }
 }
 
-function guardarDocumento(documento, carpeta, nombreTrabajador) {
-  const extension = (documento.nombre.match(/\.[^.]+$/) || ['.jpg'])[0];
-  const nombre = 'DNI - ' + nombreTrabajador + extension;
-
-  const previos = carpeta.getFilesByName(nombre);
-  while (previos.hasNext()) previos.next().setTrashed(true);
-
-  const blob = Utilities.newBlob(
-    Utilities.base64Decode(documento.datos),
-    documento.tipo || 'application/octet-stream',
-    nombre
-  );
-  return carpeta.createFile(blob).getName();
-}
-
 /**
- * Copia a la carpeta del trabajador el documento que él mismo subió al
- * rellenar el formulario. El Sheet guarda el enlace, no el archivo.
- *
- * Si el enlace no se puede abrir no se corta el alta: la ficha ya está
- * generada y lo único que falta es el documento, que se puede adjuntar a
- * mano. Por eso devuelve el aviso en vez de lanzar el error.
+ * Copia a la carpeta el documento que venía como enlace en las respuestas
+ * antiguas. Si el enlace no se puede abrir no se corta el alta: la ficha ya
+ * está generada y lo único que falta es el documento.
  */
 function copiarDocumentoDeDrive(url, carpeta, nombreTrabajador) {
   const id = (String(url).match(/[-\w]{25,}/) || [])[0];
-  if (!id) return 'No se reconoció el enlace del documento: ' + url;
+  if (!id) return '';
 
   try {
     const original = DriveApp.getFileById(id);
@@ -587,36 +812,8 @@ function copiarDocumentoDeDrive(url, carpeta, nombreTrabajador) {
 
     return original.makeCopy(nombre, carpeta).getName();
   } catch (e) {
-    return 'No se pudo copiar el documento desde Drive (' + e.message + ').';
+    return '';
   }
-}
-
-/**
- * Carpeta "Apellido, Nombre" dentro de la carpeta de altas. Si ya existe se
- * reutiliza: para un trabajador que ya pasó por aquí no se crea una segunda.
- */
-function carpetaDelTrabajador(nombre) {
-  const raiz = carpetaRaiz();
-  const existentes = raiz.getFoldersByName(nombre);
-  return existentes.hasNext() ? existentes.next() : raiz.createFolder(nombre);
-}
-
-function carpetaRaiz() {
-  if (CARPETA_EMPLEADOS_ID) return DriveApp.getFolderById(CARPETA_EMPLEADOS_ID);
-  const existentes = DriveApp.getFoldersByName('Alta de personal Gestoría');
-  return existentes.hasNext() ? existentes.next() : DriveApp.createFolder('Alta de personal Gestoría');
-}
-
-/**
- * Propuesta de nombre de carpeta: "Apellido, Nombre". Es solo una propuesta,
- * el formulario la deja editar. Los apellidos compuestos y los nombres de
- * dos palabras no se pueden adivinar bien, y las carpetas que ya existen
- * tampoco siguen un patrón único.
- */
-function nombreCarpeta(datos) {
-  const primerApellido = String(datos.apellidos || '').trim().split(/\s+/)[0] || '';
-  const primerNombre = String(datos.nombre || '').trim().split(/\s+/)[0] || '';
-  return [primerApellido, primerNombre].filter(String).join(', ');
 }
 
 /**
@@ -631,7 +828,7 @@ function conCamposDerivados(datos) {
   copia.centroTrabajo = datos.sede && CENTROS[datos.sede]
     ? datos.sede + ' - ' + CENTROS[datos.sede]
     : (datos.sede || '');
-  copia.carpetaNombre = datos.carpeta || nombreCarpeta(datos);
+  copia.carpetaNombre = datos['Carpeta'] || nombreCarpetaPropuesto(datos);
 
   ['fechaNacimiento', 'fechaInicio'].forEach(function (clave) {
     copia[clave] = fechaEspanola(datos[clave]);
@@ -644,26 +841,25 @@ function conCamposDerivados(datos) {
 // FUNCIÓN 2 - HOLDED
 //
 // Dos caminos, independientes de la ficha de la gestoría:
-//   - acumularFilaHolded: deja la fila de 26 columnas en el Sheet del lote,
+//   - acumularFilaHolded: deja la fila de 26 columnas en la hoja del lote,
 //     para exportarlo y subirlo con el importador. Es el camino seguro.
 //   - altaEnHolded: crea el empleado por API, sin pasar por el Excel.
 // =====================================================================
 
-/**
- * Añade el trabajador al Sheet del lote de Holded. Si ya está (mismo número
- * de identificación fiscal), se actualiza su fila en vez de duplicarla.
- */
-function acumularFilaHolded(datos) {
-  validar(datos, OBLIGATORIOS_HOLDED);
+function acumularFilaHolded(token) {
+  soloAdmin();
+  const registro = buscarFila(token);
+  if (!registro) throw new Error('Ese alta ya no existe.');
+  validar(registro.datos, OBLIGATORIOS_HOLDED);
 
-  const hoja = hojaHolded();
-  const fila = filaHolded(datos);
+  const hoja = hojaLoteHolded();
+  const fila = filaHolded(registro.datos);
   const columnaDni = COLUMNAS_HOLDED.indexOf('Núm. identificación fiscal') + 1;
 
   let destino = 0;
   if (hoja.getLastRow() > 1) {
     const dnis = hoja.getRange(2, columnaDni, hoja.getLastRow() - 1, 1).getValues();
-    const buscado = String(datos.dni).trim().toUpperCase();
+    const buscado = String(registro.datos.dni).trim().toUpperCase();
     dnis.forEach(function (valor, i) {
       if (String(valor[0]).trim().toUpperCase() === buscado) destino = i + 2;
     });
@@ -672,19 +868,13 @@ function acumularFilaHolded(datos) {
   if (!destino) destino = hoja.getLastRow() + 1;
 
   hoja.getRange(destino, 1, 1, fila.length).setValues([fila]);
+  escribirCeldas(registro, { 'Holded': new Date(), 'Actualizado': new Date() });
 
-  return {
-    hoja: hoja.getParent().getName(),
-    url: hoja.getParent().getUrl(),
-    fila: destino,
-    actualizada: actualizada,
-  };
+  return { url: hoja.getParent().getUrl(), fila: destino, actualizada: actualizada };
 }
 
 /**
  * Construye la fila del importador en el orden exacto de COLUMNAS_HOLDED.
- * El bloque de "No residente" solo se rellena si corresponde: si se manda
- * relleno con residencia fiscal 1, Holded lo rechaza.
  */
 function filaHolded(datos) {
   const porColumna = {};
@@ -694,7 +884,8 @@ function filaHolded(datos) {
   });
 
   porColumna['Fecha nacimiento (dd/mm/aaaa)'] = fechaEspanola(datos.fechaNacimiento);
-  porColumna['Género (1: Hombre, 0: Mujer)'] = datos.genero === 'Hombre' ? '1' : (datos.genero === 'Mujer' ? '0' : '');
+  porColumna['Género (1: Hombre, 0: Mujer)'] =
+    datos.genero === 'Hombre' ? '1' : (datos.genero === 'Mujer' ? '0' : '');
 
   const esResidente = datos.residenciaFiscal !== 'No residente';
   porColumna['Residencia fiscal (1: Residente, 0: No residente)'] = esResidente ? '1' : '0';
@@ -709,31 +900,13 @@ function filaHolded(datos) {
   });
 }
 
-function hojaHolded() {
-  let libro;
-  if (HOJA_HOLDED_ID) {
-    libro = SpreadsheetApp.openById(HOJA_HOLDED_ID);
-  } else {
-    const carpeta = carpetaRaiz();
-    const existentes = carpeta.getFilesByName('Altas Holded');
-    if (existentes.hasNext()) {
-      libro = SpreadsheetApp.open(existentes.next());
-    } else {
-      libro = SpreadsheetApp.create('Altas Holded');
-      const archivo = DriveApp.getFileById(libro.getId());
-      carpeta.addFile(archivo);
-      DriveApp.getRootFolder().removeFile(archivo);
-    }
-  }
-
-  let hoja = libro.getSheetByName(HOJA_HOLDED_PESTANA);
-  if (!hoja) {
-    hoja = libro.insertSheet(HOJA_HOLDED_PESTANA);
-  }
+function hojaLoteHolded() {
+  const libro = libroMaestro();
+  let hoja = libro.getSheetByName(HOJA_LOTE_HOLDED);
+  if (!hoja) hoja = libro.insertSheet(HOJA_LOTE_HOLDED);
   if (hoja.getLastRow() === 0) {
     hoja.getRange(1, 1, 1, COLUMNAS_HOLDED.length)
-      .setValues([COLUMNAS_HOLDED])
-      .setFontWeight('bold');
+      .setValues([COLUMNAS_HOLDED]).setFontWeight('bold');
     hoja.setFrozenRows(1);
   }
   return hoja;
@@ -744,8 +917,8 @@ function hojaHolded() {
  *
  * Todo lo específico de la API vive en HOLDED_API, para poder corregir la
  * ruta o el nombre de un campo en un solo sitio. La documentación pública de
- * Holded se movió de sitio y no está confirmada: probarConexionHolded()
- * dice cuál de las rutas responde con la clave real.
+ * Holded se movió de sitio y no está confirmada: probarConexionHolded() dice
+ * cuál de las rutas responde con la clave real.
  */
 const HOLDED_API = {
   base: 'https://api.holded.com/api',
@@ -754,10 +927,13 @@ const HOLDED_API = {
   cabecera: 'key',
 };
 
-function altaEnHolded(datos) {
-  validar(datos, OBLIGATORIOS_HOLDED);
-  const clave = claveHolded();
+function altaEnHolded(token) {
+  soloAdmin();
+  const registro = buscarFila(token);
+  if (!registro) throw new Error('Ese alta ya no existe.');
+  validar(registro.datos, OBLIGATORIOS_HOLDED);
 
+  const datos = registro.datos;
   const cuerpo = {
     name: datos.nombre,
     lastName: datos.apellidos,
@@ -776,7 +952,7 @@ function altaEnHolded(datos) {
   const respuesta = UrlFetchApp.fetch(HOLDED_API.base + HOLDED_API.ruta, {
     method: 'post',
     contentType: 'application/json',
-    headers: cabeceraHolded(clave),
+    headers: cabeceraHolded(claveHolded()),
     payload: JSON.stringify(cuerpo),
     muteHttpExceptions: true,
   });
@@ -789,6 +965,8 @@ function altaEnHolded(datos) {
       '\n\nSi la ruta es la que falla, ejecuta probarConexionHolded() para ver cuál responde.'
     );
   }
+
+  escribirCeldas(registro, { 'Holded': new Date(), 'Actualizado': new Date() });
   return { respuesta: respuesta.getContentText().slice(0, 400) };
 }
 
@@ -836,8 +1014,153 @@ function guardarClaveHolded(clave) {
 
 
 // =====================================================================
+// IMPORTAR LAS RESPUESTAS ANTIGUAS
+//
+// Se ejecuta una sola vez desde el editor, para traer a la hoja maestra lo
+// que la gente ya rellenó en el Google Form viejo. Repetirla no duplica:
+// quien ya esté por DNI se salta.
+// =====================================================================
+
+function importarRespuestasAntiguas() {
+  soloAdmin();
+  const libro = SpreadsheetApp.openById(RESPUESTAS_ANTIGUAS_ID);
+  const origen = libro.getSheets()[0];
+  if (origen.getLastRow() < 2) return 'El Sheet antiguo está vacío.';
+
+  const rango = origen.getRange(1, 1, origen.getLastRow(), origen.getLastColumn()).getValues();
+  const encabezados = rango[0].map(function (e) { return String(e).trim(); });
+  const mapeo = proponerMapeo(encabezados);
+
+  const hoja = hojaTrabajadores();
+  const indices = indicesDe(hoja);
+  const yaEstan = {};
+  if (hoja.getLastRow() > 1) {
+    hoja.getRange(2, indices[campoPorClave('dni').etiqueta] + 1, hoja.getLastRow() - 1, 1)
+      .getValues().forEach(function (v) {
+        const dni = String(v[0]).trim().toUpperCase();
+        if (dni) yaEstan[dni] = true;
+      });
+  }
+
+  let importados = 0;
+  let repetidos = 0;
+  const nuevas = [];
+
+  rango.slice(1).forEach(function (fila) {
+    const datos = {};
+    CAMPOS.forEach(function (campo) {
+      const encabezado = mapeo[campo.clave];
+      const i = encabezado ? encabezados.indexOf(encabezado) : -1;
+      datos[campo.clave] = i === -1 ? '' : normalizarValor(fila[i], campo);
+    });
+    if (!datos.nombre && !datos.apellidos) return;
+
+    const dni = String(datos.dni).trim().toUpperCase();
+    if (dni && yaEstan[dni]) { repetidos++; return; }
+    if (dni) yaEstan[dni] = true;
+
+    const carpeta = carpetaDelTrabajador(nombreCarpetaPropuesto(datos));
+    const valores = new Array(hoja.getLastColumn()).fill('');
+    valores[indices['Token']] = Utilities.getUuid();
+    valores[indices['Creado']] = new Date();
+    valores[indices['Actualizado']] = new Date();
+    valores[indices['Estado']] = estadoDe(datos);
+    valores[indices['Carpeta']] = carpeta.getName();
+    valores[indices['Carpeta ID']] = carpeta.getId();
+    CAMPOS.forEach(function (campo) {
+      const i = indices[campo.etiqueta];
+      if (i !== undefined) valores[i] = datos[campo.clave];
+    });
+    nuevas.push(valores);
+    importados++;
+  });
+
+  if (nuevas.length) {
+    hoja.getRange(hoja.getLastRow() + 1, 1, nuevas.length, hoja.getLastColumn())
+      .setValues(nuevas);
+  }
+  const resumen = 'Importados ' + importados + ', repetidos ' + repetidos + '.';
+  Logger.log(resumen);
+  return resumen;
+}
+
+/**
+ * Empareja los encabezados del Sheet antiguo con los campos. Gana el
+ * sinónimo más largo que aparezca en el encabezado, para que "fecha de
+ * nacimiento" no se lleve la columna de "nacimiento" a secas.
+ */
+function proponerMapeo(encabezados) {
+  const propuesta = {};
+  const usados = {};
+
+  CAMPOS.forEach(function (campo) {
+    let mejor = '';
+    let peso = 0;
+    encabezados.forEach(function (encabezado) {
+      if (usados[encabezado]) return;
+      const limpio = sinAcentos(encabezado);
+      campo.sinonimos.forEach(function (sinonimo) {
+        const s = sinAcentos(sinonimo);
+        if (s && limpio.indexOf(s) !== -1 && s.length > peso) {
+          mejor = encabezado;
+          peso = s.length;
+        }
+      });
+    });
+    if (mejor) {
+      propuesta[campo.clave] = mejor;
+      usados[mejor] = true;
+    }
+  });
+  return propuesta;
+}
+
+function normalizarValor(valor, campo) {
+  if (valor === null || valor === undefined || valor === '') return '';
+  if (campo.tipo === 'fecha') {
+    const fecha = valor instanceof Date ? valor : new Date(valor);
+    return isNaN(fecha.getTime())
+      ? String(valor).trim()
+      : Utilities.formatDate(fecha, 'Europe/Madrid', 'yyyy-MM-dd');
+  }
+  const texto = String(valor).trim();
+  if (campo.tipo === 'lista' && campo.opciones) {
+    return opcionEquivalente(texto, campo.opciones) || texto;
+  }
+  return texto;
+}
+
+/**
+ * Empareja lo que respondió el trabajador con la opción del catálogo. Las
+ * respuestas llegan con el número delante ("1- Residente") o sin él, y el
+ * catálogo lo lleva en otro formato ("4 - Educación secundaria obligatoria
+ * (ESO)"), así que se compara sin ese prefijo.
+ *
+ * Gana la opción más larga que aparezca dentro del texto: si no, "0- No
+ * residente" se quedaría en "Residente", que es justo lo contrario.
+ */
+function opcionEquivalente(texto, opciones) {
+  const buscado = sinPrefijo(texto);
+  let encontrada = '';
+  let largo = 0;
+  opciones.forEach(function (opcion) {
+    const o = sinPrefijo(opcion);
+    if (o && buscado.indexOf(o) !== -1 && o.length > largo) {
+      encontrada = opcion;
+      largo = o.length;
+    }
+  });
+  return encontrada;
+}
+
+
+// =====================================================================
 // AUXILIARES
 // =====================================================================
+
+function campoPorClave(clave) {
+  return CAMPOS.find(function (campo) { return campo.clave === clave; });
+}
 
 function validar(datos, obligatorios) {
   const faltan = obligatorios.filter(function (clave) {
@@ -845,20 +1168,24 @@ function validar(datos, obligatorios) {
   });
   if (faltan.length) {
     const etiquetas = faltan.map(function (clave) {
-      const campo = CAMPOS.find(function (c) { return c.clave === clave; });
+      const campo = campoPorClave(clave);
       return campo ? campo.etiqueta : clave;
     });
     throw new Error('Faltan datos obligatorios: ' + etiquetas.join(', ') + '.');
   }
 }
 
-/** Las dos fichas quieren dd/mm/aaaa; el formulario devuelve aaaa-mm-dd. */
+/** Las dos fichas quieren dd/mm/aaaa; los formularios devuelven aaaa-mm-dd. */
 function fechaEspanola(valor) {
   if (!valor) return '';
   const texto = String(valor).trim();
   const iso = texto.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[3] + '/' + iso[2] + '/' + iso[1];
   return texto;
+}
+
+function sinPrefijo(texto) {
+  return sinAcentos(String(texto).replace(/^\s*\d+\s*[-.)]*\s*/, ''));
 }
 
 function sinAcentos(texto) {

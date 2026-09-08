@@ -1,70 +1,122 @@
 # Formulario Alta Personal — Gestoría / Holded
 
-Herramienta para dar de alta a un trabajador nuevo de **Sanchoyjote S.L.**
-sin rellenar nada dos veces. Hoy el mismo trabajador se carga a mano en dos
-sitios distintos, con dos formatos distintos:
+Herramienta para dar de alta a un trabajador nuevo de **Sanchoyjote S.L.** sin
+rellenar nada dos veces. Hoy el mismo trabajador se carga a mano en dos sitios
+distintos, con dos formatos distintos:
 
-1. **Ficha de la gestoría** — el `Modelo Alta Empleado - Gestoría.xlsx`, que
-   se envía a la gestoría para que tramite el alta.
+1. **Ficha de la gestoría** — el `Modelo Alta Empleado - Gestoría.xlsx`, que se
+   envía a la gestoría para que tramite el alta.
 2. **Holded** — el fichero `Importar Empleados MM.AAAA.xlsx`, de 26 columnas,
    que se sube al importador.
 
-La herramienta arma las dos a partir de la información que ya existe, y deja
-la carpeta del trabajador montada.
+## Un alta se llena en dos tandas
 
-## Las dos funciones son independientes
+Es lo que manda el diseño entero. Las altas no llegan completas: muchas veces
+las pide el jefe por WhatsApp con un nombre y una foto del DNI, y hay que
+tramitarlas ya. El resto de los datos aparece días después, cuando se le
+pregunta al trabajador.
 
-Se ejecutan por separado, una u otra, según haga falta:
+Por eso hay **dos pantallas que escriben en la misma ficha**:
 
-| Función | Qué hace |
+| Pantalla | Quién entra | Qué rellena |
+| --- | --- | --- |
+| **Panel de RRHH** | Solo los correos de `ADMINS` | Abre el alta con lo que haya, sube lo que llegue por WhatsApp y completa los datos del contrato. |
+| **Formulario del trabajador** | Cualquiera con su enlace personal | Sus datos personales y su documento de identidad. |
+
+El flujo normal:
+
+1. Llega la petición del jefe. En el panel se abre un alta: **con el nombre y
+   los apellidos ya se puede guardar**. Eso crea la fila y la carpeta en Drive.
+2. Si vino la foto del DNI por WhatsApp, se sube ahí mismo.
+3. Se completan los datos del contrato y se genera la ficha de la gestoría, sin
+   esperar a nada más.
+4. Se copia el enlace personal del trabajador y se le manda por WhatsApp.
+5. Él rellena lo suyo desde el móvil y sube su documento, que va directo a su
+   carpeta.
+6. Cuando el estado pasa a **Completo**, se carga en Holded.
+
+El orden puede cambiar: la ficha de la gestoría y la carga en Holded son
+independientes y se pueden repetir cuando llegue un dato corregido.
+
+## Qué ve cada uno
+
+Los datos del contrato —el salario incluido— **no aparecen en el formulario del
+trabajador**, ni se aceptan si llegan desde ahí. Él solo puede escribir en su
+propia fila y solo en los campos personales.
+
+El panel está cerrado a los correos de la lista `ADMINS`, al principio de
+`Code.gs`. Esto importa: la hoja tiene DNI, números de la Seguridad Social y
+cuentas bancarias de toda la plantilla, y la aplicación se publica abierta para
+que el enlace del trabajador funcione sin que él tenga cuenta de Google.
+
+El enlace del trabajador lleva un identificador largo y aleatorio. Es la llave
+de su ficha: se manda por WhatsApp a la persona, no se publica en ningún sitio.
+
+## Dónde viven los datos
+
+Una sola hoja de cálculo, **`Alta de personal`**, dentro de la carpeta de RRHH
+en Drive:
+
+| Pestaña | Qué tiene |
 | --- | --- |
-| **Ficha Gestoría** | Genera el Excel con el formato del modelo, crea la carpeta `Apellido, Nombre` y guarda dentro la ficha y el documento de identidad. |
-| **Alta en Holded** | Da de alta al trabajador en Holded por API. Como alternativa, genera la fila del importador de 26 columnas. |
+| `Trabajadores` | Una fila por alta. Las columnas de control (token, estado, fechas, carpeta) y una columna por cada campo. |
+| `Lote Holded` | Las 26 columnas del importador, listas para exportar y subir. |
 
-Un trabajador puede pasar por las dos, por una sola, o por la misma dos veces
-(regenerar la ficha si llega un dato corregido).
+La columna **Estado** se recalcula sola en cada guardado: dice `Completo` o
+cuántos datos del trabajador faltan.
 
-## De dónde salen los datos
+Un campo nuevo en `CAMPOS` aparece como columna nueva al final de
+`Trabajadores`, sin tocar las que ya tienen datos.
 
-| Fuente | Qué aporta |
+## Carpeta del trabajador
+
+Se crea al abrir el alta, con el nombre `Apellido, Nombre`, dentro de la
+carpeta de RRHH.
+
+| Archivo | Nombre |
 | --- | --- |
-| Sheet `Datos de contacto (respuestas)` | Todos los datos personales, y el enlace al documento de identidad que sube el propio trabajador. Es la fuente principal. |
-| Solicitudes del jefe por WhatsApp (texto, imágenes, documento de identidad) | Los datos del contrato, que ningún formulario pregunta. Entran a mano. |
+| Ficha de la gestoría | `Alta Empleado - Apellido, Nombre.xlsx` |
+| Documento de identidad | `DNI - Apellido, Nombre.<extensión>` |
+| Cualquier otra cosa que se suba | Conserva su nombre |
 
-Ninguna de las dos está completa por sí sola, así que la herramienta precarga
-lo que encuentra en el Sheet y deja el resto editable antes de generar nada.
+El documento de identidad se renombra siempre igual, venga del trabajador o del
+WhatsApp del jefe, para que todas las carpetas se lean igual. Subir uno nuevo
+reemplaza el anterior, y regenerar la ficha reemplaza la ficha: no se acumulan
+archivos casi iguales.
 
-El Sheet de respuestas está hecho a imagen del importador de Holded: sus 30
-columnas cubren **todos** los campos personales de las dos fichas menos el
-teléfono fijo, que el formulario no pregunta y que en Holded se queda vacío.
-De sus columnas se quedan sin usar la marca temporal y la de universidad de
-procedencia, que no hacen falta en ninguna de las dos fichas.
+El nombre de la carpeta se propone con el primer apellido y el primer nombre,
+pero **queda editable**. Los apellidos compuestos y los nombres de dos palabras
+no se pueden adivinar bien, y las carpetas que ya existen tampoco siguen un
+patrón único (`Aldana, Yorman` junto a `Lopez Garcia, Paulo César` y
+`Simón Ceballos, Eddison`).
 
 ## Salida 1 — Ficha de la gestoría
 
-Formato exacto del modelo: dos columnas, etiqueta en A y valor en B.
+Formato exacto del modelo: dos columnas, etiqueta en A y valor en B. Se genera
+en cuanto haya nombre, apellidos, DNI, fecha de alta, ocupación y centro de
+trabajo, aunque falte todo lo demás.
 
-| Fila | Campo | Origen |
+| Fila | Campo | Quién lo aporta |
 | --- | --- | --- |
-| 2 | NOMBRE Y APELLIDOS | Sheet |
-| 3 | DNI/NIE | Sheet |
-| 4 | FECHA DE NACIMIENTO | Sheet |
-| 5 | NUMERO DE AFILIACION | Sheet |
-| 6 | NIVEL FORMATIVO | Sheet (catálogo cerrado, ver abajo) |
-| 7 | NACIONALIDAD | Sheet |
-| 9 | Calle y nº | Sheet |
-| 10 | Municipio | Sheet |
-| 11 | Código Postal | Sheet |
-| 12 | Provincia | Sheet |
-| 13 | TIPO DE CONTRATO (indefinido o temporal) | Solicitud del jefe |
-| 14 | FECHA DE INICIO (alta) | Solicitud del jefe |
-| 15 | DURACIÓN DEL CONTRATO (si lo requiere el mismo) | Solicitud del jefe |
-| 16 | OCUPACION A DESEMPEÑAR | Solicitud del jefe |
-| 17 | HORAS DE JORNADA | Solicitud del jefe |
-| 18 | DISTRIBUCIÓN JORNADA | Solicitud del jefe |
+| 2 | NOMBRE Y APELLIDOS | Trabajador |
+| 3 | DNI/NIE | Trabajador |
+| 4 | FECHA DE NACIMIENTO | Trabajador |
+| 5 | NUMERO DE AFILIACION | Trabajador |
+| 6 | NIVEL FORMATIVO | Trabajador (catálogo cerrado) |
+| 7 | NACIONALIDAD | Trabajador |
+| 9 | Calle y nº | Trabajador |
+| 10 | Municipio | Trabajador |
+| 11 | Código Postal | Trabajador |
+| 12 | Provincia | Trabajador |
+| 13 | TIPO DE CONTRATO (indefinido o temporal) | RRHH |
+| 14 | FECHA DE INICIO (alta) | RRHH |
+| 15 | DURACIÓN DEL CONTRATO (si lo requiere el mismo) | RRHH |
+| 16 | OCUPACION A DESEMPEÑAR | RRHH |
+| 17 | HORAS DE JORNADA | RRHH |
+| 18 | DISTRIBUCIÓN JORNADA | RRHH |
 | 19 | CENTRO DE TRABAJO (dirección completa) | Catálogo de sedes |
-| 20 | SALARIO (si es pactado por encima del convenio) | Solicitud del jefe |
-| 21 | OTROS | Libre |
+| 20 | SALARIO (si es pactado por encima del convenio) | RRHH |
+| 21 | OTROS | RRHH |
 
 La fila 8 es el encabezado `DIRECCIÓN COMPLETA TRABAJADOR`, combinada A8:B8.
 
@@ -109,124 +161,77 @@ Diferencias con la ficha de la gestoría que hay que tener presentes:
 - La fecha va en **dd/mm/aaaa**.
 - Pide datos que la gestoría no pide: email, género, teléfono, móvil, cuenta
   bancaria, ciudad y país de nacimiento.
-- El bloque de **No residente** solo se rellena si `Residencia fiscal = 0`.
+- El bloque de **No residente** solo se rellena si `Residencia fiscal = 0`. Los
+  dos formularios lo esconden hasta que hace falta, y la fila se manda vacía en
+  ese bloque cuando la persona es residente, porque si no Holded la rechaza.
+
+Hay dos caminos, y el del lote es el seguro:
+
+| Acción | Qué hace |
+| --- | --- |
+| **Añadir al lote de Holded** | Deja la fila en la pestaña `Lote Holded`. Si el trabajador ya estaba (mismo DNI/NIE), actualiza su fila en vez de duplicarla. |
+| **Crear en Holded por API** | Crea al trabajador directamente en Holded, sin pasar por el Excel. Pide confirmación. Ver el aviso de más abajo. |
 
 Aparte del alta del empleado, cada trabajador necesita su **cuenta contable**
 (`465000XX — Remuneraciones NOMBRE APELLIDO`). Hoy se carga con un importador
-propio de dos columnas.
-
-## Carpeta del trabajador
-
-Se crea una subcarpeta por trabajador, con el nombre `Apellido, Nombre`,
-dentro de la carpeta de altas de Drive (`CARPETA_EMPLEADOS_ID`; si se deja
-vacía, la herramienta busca o crea una llamada `Alta de personal Gestoría`).
-
-Dentro van **solo dos cosas**:
-
-| Archivo | Nombre |
-| --- | --- |
-| Ficha de la gestoría | `Alta Empleado - Apellido, Nombre.xlsx` |
-| Documento de identidad | `DNI - Apellido, Nombre.<extensión>` |
-
-El documento de identidad **no hay que buscarlo**: el trabajador lo sube al
-rellenar su formulario y el Sheet guarda el enlace, así que la herramienta se
-copia el archivo sola. Solo hay que adjuntarlo a mano cuando el alta llega por
-WhatsApp —y por tanto no hay respuesta del formulario— o cuando el que subió
-no se lee.
-
-Si el enlace falla, el alta no se corta: la ficha queda generada igual y el
-aviso dice que el documento quedó pendiente.
-
-El contrato, la comunicación del alta y las nóminas llegan después y se
-guardan a mano, como hasta ahora.
-
-Regenerar la ficha de alguien **reemplaza** la anterior en vez de dejar dos
-archivos casi iguales en la misma carpeta. Y si la carpeta ya existe se
-reutiliza: no se crea una segunda para el mismo trabajador.
-
-El nombre de la carpeta se propone con el primer apellido y el primer nombre,
-pero **queda editable** en el formulario. Los apellidos compuestos y los
-nombres de dos palabras no se pueden adivinar bien, y las carpetas que ya
-existen tampoco siguen un patrón único (`Aldana, Yorman` junto a
-`Lopez Garcia, Paulo César` y `Simón Ceballos, Eddison`).
-
-## Cómo se usa
-
-1. Elegir al trabajador en el desplegable y pulsar **Traer datos**. Se
-   precarga todo lo que el personal rellenó en su formulario. Si esa persona
-   nunca lo rellenó —el caso de las altas que llegan por WhatsApp— se deja el
-   desplegable en blanco y se escribe a mano.
-2. Completar los **datos del contrato**, que ningún formulario pregunta.
-3. Adjuntar el documento de identidad.
-4. Pulsar la acción que toque. Son tres, independientes entre sí:
-
-| Botón | Qué hace |
-| --- | --- |
-| **Generar ficha de la gestoría** | Crea la carpeta, genera el Excel con el formato del modelo y guarda el documento de identidad. No toca Holded. |
-| **Añadir al lote de Holded** | Deja la fila de 26 columnas en la hoja `Altas Holded`, para exportar el lote del mes y subirlo con el importador. Si el trabajador ya estaba (mismo DNI/NIE), actualiza su fila en vez de duplicarla. |
-| **Crear en Holded por API** | Crea al trabajador directamente en Holded, sin pasar por el Excel. Pide confirmación. |
-
-## Pestaña "Columnas"
-
-Cada vez que alguien edita el formulario que rellena el personal cambian los
-encabezados del Sheet, y la herramienta deja de encontrar los datos. La
-pestaña **Columnas** muestra qué columna alimenta cada campo y permite
-corregirlo sin tocar el código. El mapeo se guarda en las propiedades del
-script.
-
-Al abrir por primera vez, la herramienta propone un mapeo por sinónimos (gana
-el sinónimo más largo que aparezca en el encabezado, para que "fecha de
-nacimiento" no se lleve la columna de "nacimiento" a secas). Contra los
-encabezados de hoy la propuesta acierta en todos los campos, pero conviene
-revisarla una vez antes de generar nada.
-
-Las respuestas también se emparejan con los catálogos aunque no vengan
-escritas igual: el Sheet contesta `1- Residente` donde el catálogo dice
-`Residente`, y el nivel formativo puede llegar con o sin el número delante.
+propio de dos columnas y todavía no está en la herramienta.
 
 ## Archivos
 
 | Archivo | Qué es |
 | --- | --- |
-| [`Code.gs`](Code.gs) | Toda la lógica: configuración, lectura del Sheet, mapeo de columnas, ficha de la gestoría, lote de Holded y llamada a la API. |
-| [`Index.html`](Index.html) | El formulario. Dibuja los campos a partir de `CAMPOS`, así que un campo nuevo se agrega en un solo sitio. |
+| [`Code.gs`](Code.gs) | Toda la lógica: configuración, hoja maestra, panel, formulario del trabajador, ficha de la gestoría, lote de Holded y llamada a la API. |
+| [`Index.html`](Index.html) | El panel de RRHH. |
+| [`Trabajador.html`](Trabajador.html) | El formulario del trabajador, pensado para el móvil. |
 | [`appsscript.json`](appsscript.json) | Zona horaria, permisos y acceso a la aplicación web. |
 
-Cuidado con `Index.html`: si le haces clic desde aquí, el navegador **lo
-muestra como página web** en vez del código. Para ver el código, ábrelo desde
+Los dos formularios se dibujan a partir de `CAMPOS`, en `Code.gs`: un campo
+nuevo se agrega en un solo sitio y aparece donde le toque según su grupo.
+
+Cuidado con los `.html`: si les haces clic desde aquí, el navegador **los
+muestra como página web** en vez del código. Para ver el código, ábrelos desde
 el Explorador con clic derecho → **Abrir con → Bloc de notas**.
 
 ## Puesta en marcha
 
 1. Crear un proyecto nuevo en [script.google.com](https://script.google.com) y
-   pegar los tres archivos.
+   pegar los cuatro archivos.
 2. Revisar el bloque de **configuración** al principio de `Code.gs`:
-   `RESPUESTAS_ID` ya está puesto; `CARPETA_EMPLEADOS_ID` y `HOJA_HOLDED_ID`
-   pueden quedarse vacíos la primera vez y la herramienta crea lo que falte.
-3. Cargar la clave de la API de Holded **una sola vez**, ejecutando desde el
-   editor `guardarClaveHolded('la-clave')`. No se escribe en el código para
-   que no acabe en el repositorio.
-4. Ejecutar `probarConexionHolded()` y mirar el registro: dice cuál de las
-   rutas candidatas responde. Ver el aviso de abajo.
-5. Implementar como **aplicación web**, ejecutándose como quien despliega y
-   con acceso solo para esa cuenta.
+   - `ADMINS` — quién puede abrir el panel.
+   - `CARPETA_RRHH_ID` — la carpeta de Drive donde va todo. Si se deja vacía, se
+     crea una llamada `Alta de personal` en la unidad de quien despliega.
+   - `MAESTRO_ID` — la hoja. Vacío la primera vez; conviene fijarlo en cuanto
+     exista, para que no dependa de buscarla por nombre.
+3. Implementar como **aplicación web**: ejecutándose como quien despliega y con
+   acceso para *cualquier usuario, incluso anónimo*. Es lo que permite que el
+   trabajador abra su enlace desde el móvil sin cuenta de Google; el panel sigue
+   cerrado por la lista `ADMINS`.
+4. Ejecutar `quienSoy()` desde el editor. Debe devolver tu correo. Si devuelve
+   vacío, el panel no se podrá abrir y hay que revisar cómo quedó implementada
+   la aplicación.
+5. Ejecutar `importarRespuestasAntiguas()` una vez, para traer lo que la gente
+   ya rellenó en el Google Form viejo. Repetirla no duplica: quien ya esté por
+   DNI se salta.
+6. Retirar el Google Form viejo, para que no haya datos en dos sitios.
+7. Para Holded: cargar la clave **una sola vez** ejecutando
+   `guardarClaveHolded('la-clave')` desde el editor. No se escribe en el código
+   para que no acabe en el repositorio. Después, `probarConexionHolded()`.
 
 ### Aviso sobre la API de Holded
 
 La documentación pública de Holded se movió y las páginas de referencia de
 empleados ya no responden, así que **la ruta y los nombres de los campos del
 alta por API no están confirmados**. Todo lo específico de la API vive en el
-objeto `HOLDED_API` y en la función `altaEnHolded`, para poder corregirlo en
-un solo sitio, y `probarConexionHolded()` prueba las dos rutas candidatas
+objeto `HOLDED_API` y en la función `altaEnHolded`, para poder corregirlo en un
+solo sitio, y `probarConexionHolded()` prueba las dos rutas candidatas
 (`/team/v1/employees` y `/v2/employees`) contra la API real.
 
-Mientras eso no esté confirmado, **el camino seguro es el lote**: la hoja de
+Mientras eso no esté confirmado, **el camino seguro es el lote**: la pestaña de
 26 columnas reproduce el importador que ya se usa hoy.
 
 ## Estado
 
-Primera versión completa, **sin desplegar todavía**. El mapeo automático está
-comprobado contra los encabezados reales del Sheet de respuestas.
+Segunda versión, **sin desplegar todavía**.
 
 ### Pendiente
 
@@ -234,5 +239,7 @@ comprobado contra los encabezados reales del Sheet de respuestas.
       `probarConexionHolded()`.
 - [ ] Decidir si las cuentas contables por trabajador
       (`465000XX — Remuneraciones NOMBRE`) entran también en la herramienta.
-- [ ] Confirmar el catálogo de ocupaciones, si es cerrado. Ahora es texto
-      libre.
+- [ ] Confirmar el catálogo de ocupaciones, si es cerrado. Ahora es texto libre.
+- [ ] Decidir si RRHH quiere aviso por correo cuando un trabajador termina de
+      rellenar lo suyo. Está listo pero desactivado: se enciende poniendo un
+      correo en `AVISAR_A`.
