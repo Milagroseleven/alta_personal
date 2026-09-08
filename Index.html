@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f5f7;
+      margin: 0;
+      padding: 16px;
+      color: #1a1a1a;
+    }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 900px;
+      margin: 0 auto;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    h1 { font-size: 19px; margin: 0 0 4px; }
+    .sub { color: #666; font-size: 13px; margin: 0 0 20px; }
+
+    .pestanas { display: flex; gap: 4px; border-bottom: 1px solid #e3e4e8; margin-bottom: 20px; }
+    .pestanas button {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      padding: 10px 14px; font-size: 14px; font-weight: 600; color: #666;
+      cursor: pointer; font-family: inherit;
+    }
+    .pestanas button.activa { color: #2563eb; border-bottom-color: #2563eb; }
+
+    h2 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+      color: #666; margin: 26px 0 4px; padding-bottom: 6px;
+      border-bottom: 1px solid #eceef1;
+    }
+    .rejilla { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+    .campo.ancho { grid-column: 1 / -1; }
+
+    label { display: block; font-weight: 600; font-size: 13px; margin: 16px 0 6px; }
+    .req::after { content: ' *'; color: #d33; }
+    input, select, textarea {
+      width: 100%; padding: 10px; font-size: 14px;
+      border: 1px solid #ccc; border-radius: 8px; background: #fff;
+      font-family: inherit;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid #2563eb; border-color: #2563eb; }
+    .pista { font-weight: 400; color: #888; font-size: 12px; margin-left: 6px; }
+
+    .barra { display: flex; gap: 10px; align-items: flex-end; }
+    .barra > div:first-child { flex: 1; }
+
+    button.accion {
+      padding: 12px 18px; font-size: 14px; font-weight: 600;
+      border-radius: 8px; border: none; cursor: pointer; font-family: inherit;
+    }
+    button.primaria { background: #2563eb; color: #fff; }
+    button.secundaria { background: #eef1f6; color: #1a1a1a; }
+    button.accion:disabled { opacity: .5; cursor: default; }
+
+    .acciones {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid #eceef1;
+    }
+
+    #aviso { margin-top: 18px; padding: 14px; border-radius: 8px; font-size: 14px; display: none; }
+    #aviso.ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    #aviso.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    #aviso a { color: inherit; }
+    #aviso ul { margin: 8px 0 0; padding-left: 20px; }
+
+    .archivo { border: 1px dashed #2563eb; background: #eff6ff; border-radius: 8px; padding: 14px; }
+    .archivo input { border: none; background: none; padding: 0; }
+
+    .oculto { display: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td { padding: 7px 8px 7px 0; vertical-align: middle; }
+    td:first-child { font-weight: 600; width: 40%; }
+    .nota { font-size: 13px; color: #666; line-height: 1.55; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Alta de personal</h1>
+    <p class="sub">Sanchoyjote S.L. — ficha de la gestoría y alta en Holded</p>
+
+    <div class="pestanas">
+      <button id="tabAlta" class="activa" onclick="verPestana('alta')">Alta</button>
+      <button id="tabColumnas" onclick="verPestana('columnas')">Columnas</button>
+    </div>
+
+    <!-- ============================ ALTA ============================ -->
+    <div id="panelAlta">
+      <div class="barra">
+        <div>
+          <label for="trabajador">Trabajador del formulario del personal</label>
+          <select id="trabajador">
+            <option value="">Cargando…</option>
+          </select>
+        </div>
+        <button class="accion secundaria" onclick="cargar()">Traer datos</button>
+      </div>
+      <p class="nota" style="margin-top:8px;">
+        Si el trabajador no rellenó el formulario, deja el desplegable en blanco
+        y escribe los datos a mano.
+      </p>
+
+      <h2>Datos personales</h2>
+      <div class="rejilla" id="grupoPersonal"></div>
+
+      <h2>Datos del contrato</h2>
+      <div class="rejilla" id="grupoContrato"></div>
+
+      <h2>Carpeta y documento</h2>
+      <div class="rejilla">
+        <div class="campo">
+          <label for="carpeta">Nombre de la carpeta<span class="pista">Apellido, Nombre</span></label>
+          <input type="text" id="carpeta" oninput="carpetaTocada = true">
+        </div>
+        <div class="campo">
+          <label for="documento">Documento de identidad</label>
+          <div class="archivo">
+            <input type="file" id="documento" accept="image/*,.pdf">
+          </div>
+        </div>
+      </div>
+
+      <div class="acciones">
+        <button class="accion primaria" id="btnFicha" onclick="generarFicha()">
+          Generar ficha de la gestoría
+        </button>
+        <button class="accion secundaria" id="btnLote" onclick="aHolded('lote')">
+          Añadir al lote de Holded
+        </button>
+        <button class="accion secundaria" id="btnApi" onclick="aHolded('api')">
+          Crear en Holded por API
+        </button>
+      </div>
+
+      <div id="aviso"></div>
+    </div>
+
+    <!-- ========================== COLUMNAS ========================== -->
+    <div id="panelColumnas" class="oculto">
+      <p class="nota">
+        Cada vez que alguien edita el formulario que rellena el personal cambian
+        los encabezados del Sheet, y la herramienta deja de encontrar los datos.
+        Aquí se ve qué columna alimenta cada campo y se puede corregir.
+      </p>
+      <table id="tablaMapeo"><tr><td>Cargando…</td></tr></table>
+      <div class="acciones">
+        <button class="accion primaria" onclick="guardarColumnas()">Guardar mapeo</button>
+      </div>
+      <div id="avisoColumnas" class="nota" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+<script>
+const CONFIG = <?!= config ?>;
+let carpetaTocada = false;
+
+// ---------------------------------------------------------------------
+// Dibujado del formulario. Los campos salen de CAMPOS en Code.gs, así que
+// añadir uno nuevo no obliga a tocar este archivo.
+// ---------------------------------------------------------------------
+function pintarCampos() {
+  const obligatorios = CONFIG.obligatoriosGestoria.concat(CONFIG.obligatoriosHolded);
+
+  CONFIG.campos.forEach(function (campo) {
+    const destino = document.getElementById(
+      campo.grupo === 'personal' ? 'grupoPersonal' : 'grupoContrato'
+    );
+
+    const div = document.createElement('div');
+    div.className = 'campo' + (campo.tipo === 'area' ? ' ancho' : '');
+
+    const label = document.createElement('label');
+    label.setAttribute('for', 'c_' + campo.clave);
+    label.textContent = campo.etiqueta;
+    if (obligatorios.indexOf(campo.clave) !== -1) label.className = 'req';
+    div.appendChild(label);
+
+    let control;
+    if (campo.tipo === 'lista') {
+      control = document.createElement('select');
+      control.appendChild(new Option('', ''));
+      campo.opciones.forEach(function (opcion) {
+        control.appendChild(new Option(opcion, opcion));
+      });
+    } else if (campo.tipo === 'area') {
+      control = document.createElement('textarea');
+    } else {
+      control = document.createElement('input');
+      control.type = campo.tipo === 'fecha' ? 'date' : (campo.tipo === 'numero' ? 'number' : 'text');
+    }
+    control.id = 'c_' + campo.clave;
+    div.appendChild(control);
+    destino.appendChild(div);
+  });
+
+  // El nombre de la carpeta se propone solo mientras nadie lo haya escrito.
+  ['c_nombre', 'c_apellidos'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', proponerCarpeta);
+  });
+}
+
+function proponerCarpeta() {
+  if (carpetaTocada) return;
+  const apellido = (valor('apellidos').trim().split(/\s+/)[0] || '');
+  const nombre = (valor('nombre').trim().split(/\s+/)[0] || '');
+  document.getElementById('carpeta').value = [apellido, nombre].filter(String).join(', ');
+}
+
+function valor(clave) {
+  const control = document.getElementById('c_' + clave);
+  return control ? control.value : '';
+}
+
+function recogerDatos() {
+  const datos = { carpeta: document.getElementById('carpeta').value.trim() };
+  CONFIG.campos.forEach(function (campo) {
+    datos[campo.clave] = valor(campo.clave).trim();
+  });
+  return datos;
+}
+
+// ---------------------------------------------------------------------
+// Traer datos del Sheet de respuestas
+// ---------------------------------------------------------------------
+function cargarLista() {
+  google.script.run
+    .withSuccessHandler(function (lista) {
+      const select = document.getElementById('trabajador');
+      select.innerHTML = '';
+      select.appendChild(new Option('— escribir a mano —', ''));
+      lista.forEach(function (t) {
+        select.appendChild(new Option(t.etiqueta + (t.dni ? ' · ' + t.dni : ''), t.fila));
+      });
+    })
+    .withFailureHandler(function (e) {
+      const select = document.getElementById('trabajador');
+      select.innerHTML = '';
+      select.appendChild(new Option('— no se pudo leer el Sheet —', ''));
+      mostrar('error', 'No se pudo leer el Sheet de respuestas. ' + e.message);
+    })
+    .listarTrabajadores();
+}
+
+function cargar() {
+  const fila = document.getElementById('trabajador').value;
+  if (!fila) {
+    mostrar('error', 'Elige un trabajador de la lista, o escribe los datos a mano.');
+    return;
+  }
+  ocultar();
+  google.script.run
+    .withSuccessHandler(function (datos) {
+      CONFIG.campos.forEach(function (campo) {
+        if (campo.grupo !== 'personal') return;
+        const control = document.getElementById('c_' + campo.clave);
+        if (control && datos[campo.clave]) control.value = datos[campo.clave];
+      });
+      carpetaTocada = false;
+      proponerCarpeta();
+
+      const vacios = CONFIG.campos
+        .filter(function (c) { return c.grupo === 'personal' && !datos[c.clave]; })
+        .map(function (c) { return c.etiqueta; });
+      if (vacios.length) {
+        mostrar('ok', 'Datos traídos. El formulario del personal no cubre estos campos, ' +
+          'compruébalos antes de generar nada:', vacios);
+      } else {
+        mostrar('ok', 'Datos traídos. Faltan los del contrato.');
+      }
+    })
+    .withFailureHandler(fallo)
+    .cargarTrabajador(Number(fila));
+}
+
+// ---------------------------------------------------------------------
+// Función 1 - ficha de la gestoría
+// ---------------------------------------------------------------------
+function generarFicha() {
+  const datos = recogerDatos();
+  if (!datos.carpeta) {
+    mostrar('error', 'Falta el nombre de la carpeta del trabajador.');
+    return;
+  }
+
+  const archivo = document.getElementById('documento').files[0];
+  if (!archivo) {
+    enviarFicha(datos, null);
+    return;
+  }
+
+  const lector = new FileReader();
+  lector.onload = function () {
+    enviarFicha(datos, {
+      nombre: archivo.name,
+      tipo: archivo.type,
+      datos: lector.result.split(',')[1],
+    });
+  };
+  lector.onerror = function () { mostrar('error', 'No se pudo leer el documento adjunto.'); };
+  lector.readAsDataURL(archivo);
+}
+
+function enviarFicha(datos, documento) {
+  ocupado(true, 'btnFicha', 'Generando…');
+  google.script.run
+    .withSuccessHandler(function (r) {
+      ocupado(false, 'btnFicha', 'Generar ficha de la gestoría');
+      const detalle = ['Carpeta: ' + r.carpeta, 'Ficha: ' + r.ficha];
+      if (r.documento) detalle.push('Documento: ' + r.documento);
+      mostrar('ok', 'Ficha generada. <a href="' + r.carpetaUrl + '" target="_blank">Abrir la carpeta</a>', detalle);
+    })
+    .withFailureHandler(function (e) {
+      ocupado(false, 'btnFicha', 'Generar ficha de la gestoría');
+      fallo(e);
+    })
+    .generarFichaGestoria(datos, documento);
+}
+
+// ---------------------------------------------------------------------
+// Función 2 - Holded
+// ---------------------------------------------------------------------
+function aHolded(modo) {
+  const datos = recogerDatos();
+  const boton = modo === 'lote' ? 'btnLote' : 'btnApi';
+  const texto = modo === 'lote' ? 'Añadir al lote de Holded' : 'Crear en Holded por API';
+
+  if (modo === 'api' && !confirm(
+      'Esto crea al trabajador directamente en Holded y no se puede deshacer desde aquí.\n\n¿Seguimos?')) {
+    return;
+  }
+
+  ocupado(true, boton, 'Enviando…');
+  const ejecutor = google.script.run
+    .withSuccessHandler(function (r) {
+      ocupado(false, boton, texto);
+      if (modo === 'lote') {
+        mostrar('ok', (r.actualizada ? 'Fila actualizada' : 'Fila añadida') +
+          ' en la hoja del lote. <a href="' + r.url + '" target="_blank">Abrirla</a>');
+      } else {
+        mostrar('ok', 'Trabajador creado en Holded.');
+      }
+    })
+    .withFailureHandler(function (e) {
+      ocupado(false, boton, texto);
+      fallo(e);
+    });
+
+  if (modo === 'lote') ejecutor.acumularFilaHolded(datos);
+  else ejecutor.altaEnHolded(datos);
+}
+
+// ---------------------------------------------------------------------
+// Pestaña Columnas
+// ---------------------------------------------------------------------
+function cargarColumnas() {
+  google.script.run
+    .withSuccessHandler(function (estado) {
+      const tabla = document.getElementById('tablaMapeo');
+      tabla.innerHTML = '';
+      CONFIG.campos.forEach(function (campo) {
+        if (campo.grupo !== 'personal') return;
+        const fila = tabla.insertRow();
+        fila.insertCell().textContent = campo.etiqueta;
+
+        const select = document.createElement('select');
+        select.id = 'm_' + campo.clave;
+        select.appendChild(new Option('— sin columna —', ''));
+        estado.encabezados.forEach(function (encabezado) {
+          select.appendChild(new Option(encabezado, encabezado));
+        });
+        select.value = estado.mapeo[campo.clave] || '';
+        fila.insertCell().appendChild(select);
+      });
+
+      document.getElementById('avisoColumnas').textContent = estado.sinAsignar.length
+        ? 'Sin columna asignada: ' + estado.sinAsignar.join(', ') + '.'
+        : 'Todos los campos personales tienen columna.';
+    })
+    .withFailureHandler(function (e) {
+      document.getElementById('avisoColumnas').textContent =
+        'No se pudo leer el Sheet de respuestas. ' + e.message;
+    })
+    .estadoMapeo();
+}
+
+function guardarColumnas() {
+  const mapeo = {};
+  CONFIG.campos.forEach(function (campo) {
+    if (campo.grupo !== 'personal') return;
+    const select = document.getElementById('m_' + campo.clave);
+    if (select) mapeo[campo.clave] = select.value;
+  });
+  google.script.run
+    .withSuccessHandler(function () {
+      document.getElementById('avisoColumnas').textContent = 'Mapeo guardado.';
+      cargarLista();
+    })
+    .withFailureHandler(function (e) {
+      document.getElementById('avisoColumnas').textContent = 'No se pudo guardar. ' + e.message;
+    })
+    .guardarMapeo(mapeo);
+}
+
+// ---------------------------------------------------------------------
+// Avisos y navegación
+// ---------------------------------------------------------------------
+function verPestana(cual) {
+  const esAlta = cual === 'alta';
+  document.getElementById('panelAlta').classList.toggle('oculto', !esAlta);
+  document.getElementById('panelColumnas').classList.toggle('oculto', esAlta);
+  document.getElementById('tabAlta').classList.toggle('activa', esAlta);
+  document.getElementById('tabColumnas').classList.toggle('activa', !esAlta);
+  if (!esAlta) cargarColumnas();
+}
+
+function mostrar(tipo, mensaje, lista) {
+  const aviso = document.getElementById('aviso');
+  aviso.className = tipo;
+  aviso.innerHTML = mensaje + (lista && lista.length
+    ? '<ul><li>' + lista.join('</li><li>') + '</li></ul>'
+    : '');
+  aviso.style.display = 'block';
+  aviso.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function ocultar() { document.getElementById('aviso').style.display = 'none'; }
+
+function fallo(e) { mostrar('error', e.message || String(e)); }
+
+function ocupado(si, boton, texto) {
+  const b = document.getElementById(boton);
+  b.disabled = si;
+  b.textContent = texto;
+  ['btnFicha', 'btnLote', 'btnApi'].forEach(function (id) {
+    if (id !== boton) document.getElementById(id).disabled = si;
+  });
+}
+
+pintarCampos();
+cargarLista();
+</script>
+</body>
+</html>

@@ -112,30 +112,111 @@ propio de dos columnas.
 
 ## Carpeta del trabajador
 
-Se crea en:
+Se crea una subcarpeta por trabajador, con el nombre `Apellido, Nombre`,
+dentro de la carpeta de altas de Drive (`CARPETA_EMPLEADOS_ID`; si se deja
+vacía, la herramienta busca o crea una llamada `Alta de personal Gestoría`).
 
-```
-C:\Users\motic\Desktop\RRHH\Empleados\Alta de personal Gestoría\Apellido, Nombre
-```
+Dentro van **solo dos cosas**:
 
-Dentro van **solo dos cosas**: la ficha de la gestoría y el documento de
-identidad. El contrato, la comunicación del alta y las nóminas llegan después
-y se guardan a mano, como hasta ahora.
+| Archivo | Nombre |
+| --- | --- |
+| Ficha de la gestoría | `Alta Empleado - Apellido, Nombre.xlsx` |
+| Documento de identidad | `DNI - Apellido, Nombre.<extensión>` |
 
-Las carpetas que ya existen se crearon a mano y no siguen un patrón único
-(`DNI.jpeg`, `Cadiz, Cristian.jpg`, `Modelo Alta Empleado - John Smith.xlsx`).
-A partir de aquí el nombre lo pone la herramienta.
+El contrato, la comunicación del alta y las nóminas llegan después y se
+guardan a mano, como hasta ahora.
+
+Regenerar la ficha de alguien **reemplaza** la anterior en vez de dejar dos
+archivos casi iguales en la misma carpeta. Y si la carpeta ya existe se
+reutiliza: no se crea una segunda para el mismo trabajador.
+
+El nombre de la carpeta se propone con el primer apellido y el primer nombre,
+pero **queda editable** en el formulario. Los apellidos compuestos y los
+nombres de dos palabras no se pueden adivinar bien, y las carpetas que ya
+existen tampoco siguen un patrón único (`Aldana, Yorman` junto a
+`Lopez Garcia, Paulo César` y `Simón Ceballos, Eddison`).
+
+## Cómo se usa
+
+1. Elegir al trabajador en el desplegable y pulsar **Traer datos**. Se
+   precarga todo lo que el personal rellenó en su formulario. Si esa persona
+   nunca lo rellenó —el caso de las altas que llegan por WhatsApp— se deja el
+   desplegable en blanco y se escribe a mano.
+2. Completar los **datos del contrato**, que ningún formulario pregunta.
+3. Adjuntar el documento de identidad.
+4. Pulsar la acción que toque. Son tres, independientes entre sí:
+
+| Botón | Qué hace |
+| --- | --- |
+| **Generar ficha de la gestoría** | Crea la carpeta, genera el Excel con el formato del modelo y guarda el documento de identidad. No toca Holded. |
+| **Añadir al lote de Holded** | Deja la fila de 26 columnas en la hoja `Altas Holded`, para exportar el lote del mes y subirlo con el importador. Si el trabajador ya estaba (mismo DNI/NIE), actualiza su fila en vez de duplicarla. |
+| **Crear en Holded por API** | Crea al trabajador directamente en Holded, sin pasar por el Excel. Pide confirmación. |
+
+## Pestaña "Columnas"
+
+Cada vez que alguien edita el formulario que rellena el personal cambian los
+encabezados del Sheet, y la herramienta deja de encontrar los datos. La
+pestaña **Columnas** muestra qué columna alimenta cada campo y permite
+corregirlo sin tocar el código. El mapeo se guarda en las propiedades del
+script.
+
+Al abrir por primera vez, la herramienta propone un mapeo por sinónimos (gana
+el sinónimo más largo que aparezca en el encabezado, para que "fecha de
+nacimiento" no se lleve la columna de "nacimiento" a secas). Conviene revisarlo
+una vez antes de generar nada.
+
+## Archivos
+
+| Archivo | Qué es |
+| --- | --- |
+| [`Code.gs`](Code.gs) | Toda la lógica: configuración, lectura del Sheet, mapeo de columnas, ficha de la gestoría, lote de Holded y llamada a la API. |
+| [`Index.html`](Index.html) | El formulario. Dibuja los campos a partir de `CAMPOS`, así que un campo nuevo se agrega en un solo sitio. |
+| [`appsscript.json`](appsscript.json) | Zona horaria, permisos y acceso a la aplicación web. |
+
+Cuidado con `Index.html`: si le haces clic desde aquí, el navegador **lo
+muestra como página web** en vez del código. Para ver el código, ábrelo desde
+el Explorador con clic derecho → **Abrir con → Bloc de notas**.
+
+## Puesta en marcha
+
+1. Crear un proyecto nuevo en [script.google.com](https://script.google.com) y
+   pegar los tres archivos.
+2. Revisar el bloque de **configuración** al principio de `Code.gs`:
+   `RESPUESTAS_ID` ya está puesto; `CARPETA_EMPLEADOS_ID` y `HOJA_HOLDED_ID`
+   pueden quedarse vacíos la primera vez y la herramienta crea lo que falte.
+3. Cargar la clave de la API de Holded **una sola vez**, ejecutando desde el
+   editor `guardarClaveHolded('la-clave')`. No se escribe en el código para
+   que no acabe en el repositorio.
+4. Ejecutar `probarConexionHolded()` y mirar el registro: dice cuál de las
+   rutas candidatas responde. Ver el aviso de abajo.
+5. Implementar como **aplicación web**, ejecutándose como quien despliega y
+   con acceso solo para esa cuenta.
+
+### Aviso sobre la API de Holded
+
+La documentación pública de Holded se movió y las páginas de referencia de
+empleados ya no responden, así que **la ruta y los nombres de los campos del
+alta por API no están confirmados**. Todo lo específico de la API vive en el
+objeto `HOLDED_API` y en la función `altaEnHolded`, para poder corregirlo en
+un solo sitio, y `probarConexionHolded()` prueba las dos rutas candidatas
+(`/team/v1/employees` y `/v2/employees`) contra la API real.
+
+Mientras eso no esté confirmado, **el camino seguro es el lote**: la hoja de
+26 columnas reproduce el importador que ya se usa hoy.
 
 ## Estado
 
-Estructura y mapeo de campos definidos. Falta el código.
+Primera versión completa, **sin desplegar todavía**.
 
 ### Pendiente
 
-- [ ] Acceso al Sheet de respuestas para leer sus columnas reales. Compartir
-      `1zCq_AnPsuLf-h9AaEsjowAacFtGzdMCPKSC8gEFbhkw` con
-      `conciliacion-ventas@conciliacion-ventas.iam.gserviceaccount.com`.
-- [ ] Clave de API de Holded.
-- [ ] Confirmar cómo llega el documento de identidad (archivo en el PC,
-      Drive, o adjunto en el momento).
-- [ ] Decidir el nombre del archivo de la ficha y del documento de identidad.
+- [ ] Compartir el Sheet de respuestas
+      (`1zCq_AnPsuLf-h9AaEsjowAacFtGzdMCPKSC8gEFbhkw`) para poder revisar sus
+      encabezados reales y afinar la propuesta de mapeo. Mientras tanto, la
+      pestaña "Columnas" permite asignarlos a mano.
+- [ ] Clave de la API de Holded, y confirmar la ruta con
+      `probarConexionHolded()`.
+- [ ] Decidir si las cuentas contables por trabajador
+      (`465000XX — Remuneraciones NOMBRE`) entran también en la herramienta.
+- [ ] Confirmar el catálogo de ocupaciones, si es cerrado. Ahora es texto
+      libre.
