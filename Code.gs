@@ -103,6 +103,12 @@ const CAMPOS = [
   { clave: 'dni', etiqueta: 'DNI / NIE', grupo: 'personal', tipo: 'texto',
     sinonimos: ['dni', 'nie', 'documento de identidad', 'identificacion fiscal'],
     holded: 'Núm. identificación fiscal' },
+  // El trabajador sube su documento en el propio formulario y el Sheet
+  // guarda el enlace de Drive. Con eso, la herramienta se copia el archivo
+  // sola y no hay que adjuntarlo a mano.
+  { clave: 'documentoUrl', etiqueta: 'Documento de identidad subido por el trabajador', grupo: 'personal', tipo: 'texto',
+    sinonimos: ['documento de identificacion', 'documento identidad', 'adjunto'],
+    holded: null },
   { clave: 'fechaNacimiento', etiqueta: 'Fecha de nacimiento', grupo: 'personal', tipo: 'fecha',
     sinonimos: ['fecha de nacimiento', 'nacimiento'],
     holded: 'Fecha nacimiento (dd/mm/aaaa)' },
@@ -145,6 +151,31 @@ const CAMPOS = [
     opciones: ['Residente', 'No residente'],
     sinonimos: ['residencia fiscal', 'residente'],
     holded: 'Residencia fiscal (1: Residente, 0: No residente)' },
+
+  // Bloque de no residente. Holded lo rechaza si llega relleno con
+  // residencia fiscal 1, así que se vacía solo cuando no corresponde y el
+  // formulario ni siquiera lo enseña.
+  { clave: 'direccionNoResidente', etiqueta: 'Dirección (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['direccion no residente'],
+    holded: 'Dirección No residente' },
+  { clave: 'poblacionNoResidente', etiqueta: 'Población (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['poblacion no residente'],
+    holded: 'Población No residente' },
+  { clave: 'codigoPostalNoResidente', etiqueta: 'Código postal (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['codigo postal no residente'],
+    holded: 'Código postal No residente' },
+  { clave: 'provinciaNoResidente', etiqueta: 'Provincia (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['provincia no residente'],
+    holded: 'Provincia No residente' },
+  { clave: 'paisNoResidente', etiqueta: 'País (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['pais no residente'],
+    holded: 'País No residente' },
+  { clave: 'dniNoResidente', etiqueta: 'Nº de identificación (no residente)', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['identificacion no residente'],
+    holded: 'Núm. identificación fiscal No residente' },
+  { clave: 'finNoResidente', etiqueta: 'Fin de la situación de no residente', grupo: 'personal', tipo: 'texto',
+    soloNoResidente: true, sinonimos: ['fin de situacion no residente'],
+    holded: 'Fin de situación no-residente' },
 
   { clave: 'tipoContrato', etiqueta: 'Tipo de contrato', grupo: 'contrato', tipo: 'lista',
     opciones: TIPOS_CONTRATO, sinonimos: [], holded: null },
@@ -317,16 +348,36 @@ function normalizarValor(valor, campo) {
   }
   const texto = String(valor).trim();
   if (campo.tipo === 'lista' && campo.opciones) {
-    // El formulario del personal puede responder "hombre" u "H" donde la
-    // ficha espera "Hombre". Se busca la opción que empiece igual.
-    const buscado = sinAcentos(texto);
-    const encontrada = campo.opciones.find(function (opcion) {
-      const o = sinAcentos(opcion);
-      return o === buscado || o.indexOf(buscado) === 0 || buscado.indexOf(o) === 0;
-    });
-    return encontrada || texto;
+    return opcionEquivalente(texto, campo.opciones) || texto;
   }
   return texto;
+}
+
+/**
+ * Empareja lo que respondió el trabajador con la opción del catálogo. Las
+ * respuestas llegan con el número delante ("1- Residente") o sin él, y el
+ * catálogo lo lleva en otro formato ("4 - Educación secundaria obligatoria
+ * (ESO)"), así que se compara sin ese prefijo.
+ *
+ * Gana la opción más larga que aparezca dentro del texto: si no, "0- No
+ * residente" se quedaría en "Residente", que es justo lo contrario.
+ */
+function opcionEquivalente(texto, opciones) {
+  const buscado = sinPrefijo(texto);
+  let encontrada = '';
+  let largo = 0;
+  opciones.forEach(function (opcion) {
+    const o = sinPrefijo(opcion);
+    if (o && buscado.indexOf(o) !== -1 && o.length > largo) {
+      encontrada = opcion;
+      largo = o.length;
+    }
+  });
+  return encontrada;
+}
+
+function sinPrefijo(texto) {
+  return sinAcentos(String(texto).replace(/^\s*\d+\s*[-.)]*\s*/, ''));
 }
 
 
@@ -432,9 +483,14 @@ function generarFichaGestoria(datos, documento) {
 
   const archivo = crearFichaXlsx(completos, carpeta);
 
+  // Manda lo que se adjunte a mano: sirve para corregir un documento
+  // ilegible o para las altas que llegan por WhatsApp, donde no hay
+  // respuesta del formulario y por tanto no hay enlace.
   let docGuardado = '';
   if (documento && documento.datos) {
     docGuardado = guardarDocumento(documento, carpeta, completos.carpetaNombre);
+  } else if (datos.documentoUrl) {
+    docGuardado = copiarDocumentoDeDrive(datos.documentoUrl, carpeta, completos.carpetaNombre);
   }
 
   return {
@@ -507,6 +563,32 @@ function guardarDocumento(documento, carpeta, nombreTrabajador) {
     nombre
   );
   return carpeta.createFile(blob).getName();
+}
+
+/**
+ * Copia a la carpeta del trabajador el documento que él mismo subió al
+ * rellenar el formulario. El Sheet guarda el enlace, no el archivo.
+ *
+ * Si el enlace no se puede abrir no se corta el alta: la ficha ya está
+ * generada y lo único que falta es el documento, que se puede adjuntar a
+ * mano. Por eso devuelve el aviso en vez de lanzar el error.
+ */
+function copiarDocumentoDeDrive(url, carpeta, nombreTrabajador) {
+  const id = (String(url).match(/[-\w]{25,}/) || [])[0];
+  if (!id) return 'No se reconoció el enlace del documento: ' + url;
+
+  try {
+    const original = DriveApp.getFileById(id);
+    const extension = (original.getName().match(/\.[^.]+$/) || [''])[0];
+    const nombre = 'DNI - ' + nombreTrabajador + extension;
+
+    const previos = carpeta.getFilesByName(nombre);
+    while (previos.hasNext()) previos.next().setTrashed(true);
+
+    return original.makeCopy(nombre, carpeta).getName();
+  } catch (e) {
+    return 'No se pudo copiar el documento desde Drive (' + e.message + ').';
+  }
 }
 
 /**
@@ -617,10 +699,8 @@ function filaHolded(datos) {
   const esResidente = datos.residenciaFiscal !== 'No residente';
   porColumna['Residencia fiscal (1: Residente, 0: No residente)'] = esResidente ? '1' : '0';
   if (esResidente) {
-    ['Dirección No residente', 'Población No residente', 'Código postal No residente',
-     'Provincia No residente', 'País No residente', 'Núm. identificación fiscal No residente',
-     'Fin de situación no-residente'].forEach(function (columna) {
-      porColumna[columna] = '';
+    CAMPOS.forEach(function (campo) {
+      if (campo.soloNoResidente && campo.holded) porColumna[campo.holded] = '';
     });
   }
 

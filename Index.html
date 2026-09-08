@@ -120,10 +120,15 @@
           <input type="text" id="carpeta" oninput="carpetaTocada = true">
         </div>
         <div class="campo">
-          <label for="documento">Documento de identidad</label>
+          <label for="documento">Documento de identidad<span class="pista">solo si hay que reemplazarlo</span></label>
           <div class="archivo">
             <input type="file" id="documento" accept="image/*,.pdf">
           </div>
+          <p class="nota" style="margin-top:8px;">
+            Si el trabajador lo subió al rellenar su formulario, la herramienta
+            se lo copia sola. Aquí solo hace falta adjuntarlo cuando el alta
+            llega por WhatsApp, o cuando el que subió no se lee.
+          </p>
         </div>
       </div>
 
@@ -175,6 +180,10 @@ function pintarCampos() {
 
     const div = document.createElement('div');
     div.className = 'campo' + (campo.tipo === 'area' ? ' ancho' : '');
+    if (campo.soloNoResidente) {
+      div.id = 'campo_' + campo.clave;
+      div.classList.add('oculto');
+    }
 
     const label = document.createElement('label');
     label.setAttribute('for', 'c_' + campo.clave);
@@ -203,6 +212,20 @@ function pintarCampos() {
   // El nombre de la carpeta se propone solo mientras nadie lo haya escrito.
   ['c_nombre', 'c_apellidos'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', proponerCarpeta);
+  });
+
+  document.getElementById('c_residenciaFiscal').addEventListener('change', verNoResidente);
+}
+
+/**
+ * El bloque de no residente solo estorba en el caso normal, que es el de
+ * casi toda la plantilla. Se enseña únicamente cuando hace falta.
+ */
+function verNoResidente() {
+  const hace = valor('residenciaFiscal') === 'No residente';
+  CONFIG.campos.forEach(function (campo) {
+    if (!campo.soloNoResidente) return;
+    document.getElementById('campo_' + campo.clave).classList.toggle('oculto', !hace);
   });
 }
 
@@ -264,9 +287,14 @@ function cargar() {
       });
       carpetaTocada = false;
       proponerCarpeta();
+      verNoResidente();
 
+      const esResidente = valor('residenciaFiscal') !== 'No residente';
       const vacios = CONFIG.campos
-        .filter(function (c) { return c.grupo === 'personal' && !datos[c.clave]; })
+        .filter(function (c) {
+          if (c.grupo !== 'personal' || datos[c.clave]) return false;
+          return !(c.soloNoResidente && esResidente);
+        })
         .map(function (c) { return c.etiqueta; });
       if (vacios.length) {
         mostrar('ok', 'Datos traídos. El formulario del personal no cubre estos campos, ' +

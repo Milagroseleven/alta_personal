@@ -28,12 +28,17 @@ Un trabajador puede pasar por las dos, por una sola, o por la misma dos veces
 
 | Fuente | Qué aporta |
 | --- | --- |
-| Google Sheet de respuestas del formulario que rellena el personal | El grueso de los datos personales. Es la fuente principal. |
-| Solicitudes del jefe por WhatsApp (texto, imágenes, documento de identidad) | Los datos de contrato y, muchas veces, el documento de identidad. Entran a mano. |
+| Sheet `Datos de contacto (respuestas)` | Todos los datos personales, y el enlace al documento de identidad que sube el propio trabajador. Es la fuente principal. |
+| Solicitudes del jefe por WhatsApp (texto, imágenes, documento de identidad) | Los datos del contrato, que ningún formulario pregunta. Entran a mano. |
 
-Ninguna de las dos fuentes está completa por sí sola, así que la herramienta
-precarga lo que encuentra en el Sheet y deja el resto editable antes de
-generar nada.
+Ninguna de las dos está completa por sí sola, así que la herramienta precarga
+lo que encuentra en el Sheet y deja el resto editable antes de generar nada.
+
+El Sheet de respuestas está hecho a imagen del importador de Holded: sus 30
+columnas cubren **todos** los campos personales de las dos fichas menos el
+teléfono fijo, que el formulario no pregunta y que en Holded se queda vacío.
+De sus columnas se quedan sin usar la marca temporal y la de universidad de
+procedencia, que no hacen falta en ninguna de las dos fichas.
 
 ## Salida 1 — Ficha de la gestoría
 
@@ -123,6 +128,15 @@ Dentro van **solo dos cosas**:
 | Ficha de la gestoría | `Alta Empleado - Apellido, Nombre.xlsx` |
 | Documento de identidad | `DNI - Apellido, Nombre.<extensión>` |
 
+El documento de identidad **no hay que buscarlo**: el trabajador lo sube al
+rellenar su formulario y el Sheet guarda el enlace, así que la herramienta se
+copia el archivo sola. Solo hay que adjuntarlo a mano cuando el alta llega por
+WhatsApp —y por tanto no hay respuesta del formulario— o cuando el que subió
+no se lee.
+
+Si el enlace falla, el alta no se corta: la ficha queda generada igual y el
+aviso dice que el documento quedó pendiente.
+
 El contrato, la comunicación del alta y las nóminas llegan después y se
 guardan a mano, como hasta ahora.
 
@@ -162,8 +176,13 @@ script.
 
 Al abrir por primera vez, la herramienta propone un mapeo por sinónimos (gana
 el sinónimo más largo que aparezca en el encabezado, para que "fecha de
-nacimiento" no se lleve la columna de "nacimiento" a secas). Conviene revisarlo
-una vez antes de generar nada.
+nacimiento" no se lleve la columna de "nacimiento" a secas). Contra los
+encabezados de hoy la propuesta acierta en todos los campos, pero conviene
+revisarla una vez antes de generar nada.
+
+Las respuestas también se emparejan con los catálogos aunque no vengan
+escritas igual: el Sheet contesta `1- Residente` donde el catálogo dice
+`Residente`, y el nivel formativo puede llegar con o sin el número delante.
 
 ## Archivos
 
@@ -206,14 +225,11 @@ Mientras eso no esté confirmado, **el camino seguro es el lote**: la hoja de
 
 ## Estado
 
-Primera versión completa, **sin desplegar todavía**.
+Primera versión completa, **sin desplegar todavía**. El mapeo automático está
+comprobado contra los encabezados reales del Sheet de respuestas.
 
 ### Pendiente
 
-- [ ] Compartir el Sheet de respuestas
-      (`1zCq_AnPsuLf-h9AaEsjowAacFtGzdMCPKSC8gEFbhkw`) para poder revisar sus
-      encabezados reales y afinar la propuesta de mapeo. Mientras tanto, la
-      pestaña "Columnas" permite asignarlos a mano.
 - [ ] Clave de la API de Holded, y confirmar la ruta con
       `probarConexionHolded()`.
 - [ ] Decidir si las cuentas contables por trabajador
