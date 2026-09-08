@@ -1,0 +1,7 @@
+.venv/
+*.env
+*credentials*.json
+*service-account*.json
+~$*
+Thumbs.db
+desktop.ini
