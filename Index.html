@@ -64,7 +64,7 @@
     }
     .estado b { font-size: 14px; }
     .estado ul { margin: 8px 0 0; padding-left: 20px; color: #555; }
-    .enlace { display: flex; gap: 8px; margin-top: 12px; }
+    .enlace { display: flex; gap: 8px; margin: 4px 0 0; }
     .enlace input { font-size: 12.5px; color: #444; background: #fff; }
 
     #aviso { margin-top: 18px; padding: 14px; border-radius: 8px; font-size: 14px; display: none; line-height: 1.5; }
@@ -84,7 +84,16 @@
     <h1>Alta de personal</h1>
     <p class="sub">Sanchoyjote S.L. — ficha de la gestoría y alta en Holded</p>
 
-    <div class="barra">
+    <div class="enlace">
+      <input type="text" id="enlaceFormulario" readonly>
+      <button class="accion secundaria" onclick="copiar()">Copiar enlace</button>
+    </div>
+    <p class="nota">
+      El formulario que rellena el trabajador. Es el mismo para todos: se le
+      manda por WhatsApp y él se identifica con su DNI.
+    </p>
+
+    <div class="barra" style="margin-top:20px;">
       <div>
         <label for="altas">Alta en curso</label>
         <select id="altas" onchange="abrir()">
@@ -99,7 +108,7 @@
     </div>
 
     <h2>Datos personales</h2>
-    <p class="nota">Los rellena el trabajador desde su enlace. Aquí se pueden corregir.</p>
+    <p class="nota">Los rellena el trabajador desde el formulario. Aquí se pueden corregir.</p>
     <div class="rejilla" id="grupoPersonal"></div>
 
     <h2>Datos del contrato</h2>
@@ -145,7 +154,7 @@
 <script>
 const CONFIG = <?!= config ?>;
 const BOTONES = ['btnGuardar', 'btnFicha', 'btnLote', 'btnApi', 'btnSubir'];
-let token = '';
+let idAlta = '';
 let carpetaTocada = false;
 
 // ---------------------------------------------------------------------
@@ -248,7 +257,7 @@ function cargarLista(seleccionar) {
       select.appendChild(new Option('— ninguna —', ''));
       lista.forEach(function (a) {
         const marcas = (a.fichaGenerada ? ' · ficha' : '') + (a.enHolded ? ' · Holded' : '');
-        select.appendChild(new Option(a.etiqueta + ' — ' + a.estado + marcas, a.token));
+        select.appendChild(new Option(a.etiqueta + ' — ' + a.estado + marcas, a.id));
       });
       if (seleccionar) select.value = seleccionar;
     })
@@ -257,7 +266,7 @@ function cargarLista(seleccionar) {
 }
 
 function nueva() {
-  token = '';
+  idAlta = '';
   limpiar();
   document.getElementById('altas').value = '';
   document.getElementById('estado').innerHTML =
@@ -275,7 +284,7 @@ function abrir() {
 
   google.script.run
     .withSuccessHandler(function (r) {
-      token = elegido;
+      idAlta = elegido;
       limpiar();
       CONFIG.campos.forEach(function (campo) {
         const control = document.getElementById('c_' + campo.clave);
@@ -304,27 +313,21 @@ function pintarEstado(r) {
     partes.push('Enviado a Holded el ' + r.datos['Holded'] + '.');
   }
   if (r.falta.length) {
-    partes.push('<ul><li>' + r.falta.join('</li><li>') + '</li></ul>');
+    partes.push('Pídeselos con el enlace del formulario, arriba.' +
+      '<ul><li>' + r.falta.join('</li><li>') + '</li></ul>');
   }
 
-  document.getElementById('estado').innerHTML =
-    partes.join('<br>') +
-    '<div class="enlace">' +
-    '<input type="text" id="enlace" readonly value="' + r.enlace + '">' +
-    '<button class="accion secundaria" onclick="copiar()">Copiar enlace</button>' +
-    '</div>' +
-    '<p class="nota">Este es el enlace personal del trabajador. Mándaselo por ' +
-    'WhatsApp para que rellene lo que falta y suba su documento.</p>';
+  document.getElementById('estado').innerHTML = partes.join('<br>');
 }
 
 function copiar() {
-  const campo = document.getElementById('enlace');
+  const campo = document.getElementById('enlaceFormulario');
   campo.select();
   campo.setSelectionRange(0, 99999);
   let copiado = false;
   try { copiado = document.execCommand('copy'); } catch (e) { copiado = false; }
   mostrar('ok', copiado
-    ? 'Enlace copiado. Pégalo en el WhatsApp del trabajador.'
+    ? 'Enlace copiado. Es el mismo para todos: pégalo en el WhatsApp de quien tenga que rellenarlo.'
     : 'No se pudo copiar solo. El enlace está seleccionado: cópialo con Ctrl+C.');
 }
 
@@ -338,21 +341,21 @@ function guardar() {
   const terminar = function (texto) {
     return function (r) {
       ocupado(false, 'btnGuardar', 'Guardar');
-      if (r.token) token = r.token;
-      cargarLista(token);
+      if (r.id) idAlta = r.id;
+      cargarLista(idAlta);
       google.script.run.withSuccessHandler(function (a) {
         pintarEstado(a);
         botones();
         mostrar('ok', texto);
-      }).withFailureHandler(fallo).cargarAlta(token);
+      }).withFailureHandler(fallo).cargarAlta(idAlta);
     };
   };
 
-  if (token) {
+  if (idAlta) {
     google.script.run
       .withSuccessHandler(terminar('Cambios guardados.'))
       .withFailureHandler(function (e) { ocupado(false, 'btnGuardar', 'Guardar'); fallo(e); })
-      .guardarAlta(token, datos);
+      .guardarAlta(idAlta, datos);
   } else {
     google.script.run
       .withSuccessHandler(terminar('Alta abierta y carpeta creada. Ya puedes mandarle el enlace al trabajador.'))
@@ -377,7 +380,7 @@ function subir() {
           '<a href="' + r.carpetaUrl + '" target="_blank">Abrir la carpeta</a>');
       })
       .withFailureHandler(function (e) { ocupado(false, 'btnSubir', 'Subir a la carpeta'); fallo(e); })
-      .subirDocumento(token, {
+      .subirDocumento(idAlta, {
         nombre: elegido.name, tipo: elegido.type, datos: lector.result.split(',')[1],
       }, esIdentidad);
   };
@@ -393,10 +396,10 @@ function ficha() {
       const detalle = ['Carpeta: ' + r.carpeta, 'Ficha: ' + r.ficha];
       if (r.documento) detalle.push('Documento: ' + r.documento);
       mostrar('ok', 'Ficha generada. <a href="' + r.carpetaUrl + '" target="_blank">Abrir la carpeta</a>', detalle);
-      cargarLista(token);
+      cargarLista(idAlta);
     })
     .withFailureHandler(function (e) { ocupado(false, 'btnFicha', 'Generar ficha de la gestoría'); fallo(e); })
-    .generarFichaGestoria(token);
+    .generarFichaGestoria(idAlta);
 }
 
 function holded(modo) {
@@ -412,7 +415,7 @@ function holded(modo) {
   const ejecutor = google.script.run
     .withSuccessHandler(function (r) {
       ocupado(false, boton, texto);
-      cargarLista(token);
+      cargarLista(idAlta);
       if (modo === 'lote') {
         mostrar('ok', (r.actualizada ? 'Fila actualizada' : 'Fila añadida') +
           ' en el lote de Holded. <a href="' + r.url + '" target="_blank">Abrirlo</a>');
@@ -422,8 +425,8 @@ function holded(modo) {
     })
     .withFailureHandler(function (e) { ocupado(false, boton, texto); fallo(e); });
 
-  if (modo === 'lote') ejecutor.acumularFilaHolded(token);
-  else ejecutor.altaEnHolded(token);
+  if (modo === 'lote') ejecutor.acumularFilaHolded(idAlta);
+  else ejecutor.altaEnHolded(idAlta);
 }
 
 // ---------------------------------------------------------------------
@@ -433,7 +436,7 @@ function botones() {
   // Todo lo que no sea guardar necesita un alta ya abierta: sin fila en la
   // hoja no hay carpeta donde dejar nada.
   ['btnFicha', 'btnLote', 'btnApi', 'btnSubir'].forEach(function (id) {
-    document.getElementById(id).disabled = !token;
+    document.getElementById(id).disabled = !idAlta;
   });
 }
 
@@ -456,6 +459,7 @@ function ocupado(si, boton, texto) {
   if (!si) botones();
 }
 
+document.getElementById('enlaceFormulario').value = CONFIG.enlaceFormulario;
 pintarCampos();
 cargarLista();
 botones();

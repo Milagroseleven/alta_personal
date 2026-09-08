@@ -21,7 +21,11 @@ Por eso hay **dos pantallas que escriben en la misma ficha**:
 | Pantalla | Quién entra | Qué rellena |
 | --- | --- | --- |
 | **Panel de RRHH** | Solo los correos de `ADMINS` | Abre el alta con lo que haya, sube lo que llegue por WhatsApp y completa los datos del contrato. |
-| **Formulario del trabajador** | Cualquiera con su enlace personal | Sus datos personales y su documento de identidad. |
+| **Formulario del trabajador** | Cualquiera con el enlace | Sus datos personales y su documento de identidad. |
+
+**El formulario del trabajador es uno solo para todos**, con el mismo enlace
+siempre. Cada persona se identifica con su DNI/NIE y lo que envía cae en la
+fila que corresponde.
 
 El flujo normal:
 
@@ -30,7 +34,8 @@ El flujo normal:
 2. Si vino la foto del DNI por WhatsApp, se sube ahí mismo.
 3. Se completan los datos del contrato y se genera la ficha de la gestoría, sin
    esperar a nada más.
-4. Se copia el enlace personal del trabajador y se le manda por WhatsApp.
+4. Se le manda el enlace del formulario por WhatsApp. Es siempre el mismo, así
+   que se puede tener guardado, o pegarlo en un cartel con un QR.
 5. Él rellena lo suyo desde el móvil y sube su documento, que va directo a su
    carpeta.
 6. Cuando el estado pasa a **Completo**, se carga en Holded.
@@ -38,19 +43,40 @@ El flujo normal:
 El orden puede cambiar: la ficha de la gestoría y la carga en Holded son
 independientes y se pueden repetir cuando llegue un dato corregido.
 
-## Qué ve cada uno
+## Cómo se junta lo que manda el trabajador con lo que abrió RRHH
+
+Al enviar el formulario, se busca su fila así:
+
+1. **Por DNI/NIE.** Es lo único que identifica de verdad.
+2. Si no aparece, **por nombre y apellidos**, pero solo entre las filas que
+   todavía no tienen DNI. Son las altas que abrió RRHH con un mensaje del jefe,
+   donde muchas veces el DNI aún no se sabe. En cuanto una fila tiene DNI, manda
+   el DNI: dos personas pueden llamarse igual.
+3. Si no aparece nadie, se abre un alta nueva. Sirve para el trabajador que
+   rellena sus datos antes de que nadie haya tocado nada.
+
+## Quién ve qué
 
 Los datos del contrato —el salario incluido— **no aparecen en el formulario del
-trabajador**, ni se aceptan si llegan desde ahí. Él solo puede escribir en su
-propia fila y solo en los campos personales.
+trabajador**, ni se aceptan si llegan desde ahí. Y el formulario **no devuelve
+datos de nadie**: es una pantalla en blanco que solo escribe. Ni siquiera
+enseña lo que esa misma persona mandó la vez anterior.
 
 El panel está cerrado a los correos de la lista `ADMINS`, al principio de
-`Code.gs`. Esto importa: la hoja tiene DNI, números de la Seguridad Social y
-cuentas bancarias de toda la plantilla, y la aplicación se publica abierta para
-que el enlace del trabajador funcione sin que él tenga cuenta de Google.
+`Code.gs`. La aplicación se publica abierta —si no, el trabajador tendría que
+entrar con una cuenta de Google que muchos no tienen—, así que el servidor
+queda al alcance de cualquiera y la barrera tiene que estar en el código, no en
+la dirección: **esconder el panel detrás de `?rrhh=1` no protege nada**, porque
+quien conozca el enlace del formulario puede añadir el parámetro. Lo que
+protege es que cada función del panel llame a `soloAdmin()` antes de tocar la
+hoja. Esto importa porque ahí están los DNI, los números de la Seguridad Social
+y las cuentas bancarias de toda la plantilla.
 
-El enlace del trabajador lleva un identificador largo y aleatorio. Es la llave
-de su ficha: se manda por WhatsApp a la persona, no se publica en ningún sitio.
+Queda un riesgo asumido: cualquiera que sepa el DNI de un compañero podría
+sobrescribir sus datos personales desde el formulario. No puede leerlos —el
+formulario nunca devuelve nada— y cada cambio queda con su fecha en la columna
+`Actualizado`. Es el precio de que no haya enlaces personales, que era lo que
+hacía el trámite lento.
 
 ## Dónde viven los datos
 
@@ -204,8 +230,12 @@ el Explorador con clic derecho → **Abrir con → Bloc de notas**.
      exista, para que no dependa de buscarla por nombre.
 3. Implementar como **aplicación web**: ejecutándose como quien despliega y con
    acceso para *cualquier usuario, incluso anónimo*. Es lo que permite que el
-   trabajador abra su enlace desde el móvil sin cuenta de Google; el panel sigue
+   trabajador lo abra desde el móvil sin cuenta de Google; el panel sigue
    cerrado por la lista `ADMINS`.
+
+   La dirección que da Google es la del **formulario del trabajador**, la que se
+   reparte. El panel es esa misma dirección con `?rrhh=1` al final; conviene
+   guardarla en marcadores.
 4. Ejecutar `quienSoy()` desde el editor. Debe devolver tu correo. Si devuelve
    vacío, el panel no se podrá abrir y hay que revisar cómo quedó implementada
    la aplicación.
@@ -231,7 +261,7 @@ Mientras eso no esté confirmado, **el camino seguro es el lote**: la pestaña d
 
 ## Estado
 
-Segunda versión, **sin desplegar todavía**.
+Tercera versión, **sin desplegar todavía**.
 
 ### Pendiente
 

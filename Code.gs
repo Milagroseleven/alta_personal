@@ -7,9 +7,10 @@
  *      veces el jefe pide el alta por WhatsApp con un nombre y una foto del
  *      DNI— y se completan los datos del contrato, que ningún trabajador
  *      conoce ni tiene por qué conocer.
- *   2. El formulario del trabajador. Se le manda un enlace propio y él
- *      rellena sus datos personales y sube su documento de identidad, que
- *      va directo a su carpeta.
+ *   2. El formulario del trabajador. Uno solo para todos, el mismo enlace
+ *      siempre. Él rellena sus datos personales y sube su documento de
+ *      identidad, que va directo a su carpeta. Se identifica con su DNI, y
+ *      con eso lo que envía cae en la fila que ya abrió RRHH.
  *
  * Los dos escriben en la misma fila de la hoja "Trabajadores". No hay que
  * esperar a tener todo para empezar: la ficha de la gestoría se puede
@@ -211,8 +212,9 @@ const CAMPOS = [
 ];
 
 // Columnas de control de la hoja "Trabajadores", antes de las de CAMPOS.
+// El ID solo lo usa el panel para saber de qué fila habla. No sale de ahí.
 const COLUMNAS_CONTROL = [
-  'Token', 'Estado', 'Creado', 'Actualizado', 'Ficha gestoría', 'Holded',
+  'ID', 'Estado', 'Creado', 'Actualizado', 'Ficha gestoría', 'Holded',
   'Carpeta', 'Carpeta ID', 'Documento',
 ];
 
@@ -266,33 +268,25 @@ const PROP_CLAVE_HOLDED = 'HOLDED_API_KEY';
 // =====================================================================
 // ENTRADA
 //
-// La misma dirección sirve para las dos cosas. Con ?t=<token> se abre el
-// formulario del trabajador; sin nada, el panel de RRHH.
+// Una sola dirección, la que se reparte a todo el mundo, y lo que sale por
+// defecto es el formulario del trabajador. El panel de RRHH está detrás de
+// ?rrhh=1 y, sobre todo, de la comprobación de quién entra.
 // =====================================================================
 
 function doGet(e) {
-  const token = e && e.parameter ? e.parameter.t : '';
+  const quierePanel = !!(e && e.parameter && e.parameter.rrhh);
 
-  if (token) {
-    const fila = buscarFila(token);
-    if (!fila) return paginaSimple('Enlace no válido',
-      'Este enlace ya no sirve. Pide uno nuevo a Recursos Humanos.');
-
+  if (!quierePanel) {
     const plantilla = HtmlService.createTemplateFromFile('Trabajador');
-    plantilla.config = JSON.stringify({
-      campos: camposDelTrabajador(),
-      token: token,
-      datos: fila.datos,
-    });
+    plantilla.config = JSON.stringify({ campos: camposDelTrabajador() });
     return plantilla.evaluate()
-      .setTitle('Tus datos - Sanchoyjote')
+      .setTitle('Alta de personal - Sanchoyjote')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   }
 
   if (!esAdmin()) {
     return paginaSimple('Acceso restringido',
-      'Este panel es solo para Recursos Humanos. Si eres un trabajador, ' +
-      'usa el enlace personal que te enviaron.');
+      'Este panel es solo para Recursos Humanos.');
   }
 
   const plantilla = HtmlService.createTemplateFromFile('Index');
@@ -302,6 +296,7 @@ function doGet(e) {
     obligatoriosAlta: OBLIGATORIOS_ALTA,
     obligatoriosGestoria: OBLIGATORIOS_GESTORIA,
     obligatoriosHolded: OBLIGATORIOS_HOLDED,
+    enlaceFormulario: ScriptApp.getService().getUrl(),
   });
   return plantilla.evaluate()
     .setTitle('Alta de personal')
@@ -321,10 +316,15 @@ function paginaSimple(titulo, texto) {
 // =====================================================================
 // SEGURIDAD
 //
-// La aplicación se publica abierta para que el enlace del trabajador
-// funcione sin que él tenga cuenta de Google. Por eso todo lo del panel
-// comprueba quién llama, y todo lo del trabajador exige su token y solo
-// toca su propia fila.
+// La aplicación se publica abierta: si no, el trabajador tendría que entrar
+// con una cuenta de Google que muchos no tienen. Eso deja el servidor al
+// alcance de cualquiera, así que la barrera está aquí y no en la dirección.
+//
+//   - Todo lo del panel llama a soloAdmin() antes de tocar nada. Esconder el
+//     panel detrás de ?rrhh=1 no protege: quien conozca la dirección puede
+//     añadir el parámetro. Lo que protege es esta comprobación.
+//   - El formulario del trabajador solo escribe. No devuelve datos de nadie,
+//     ni siquiera de quien lo rellena, y no acepta campos del contrato.
 // =====================================================================
 
 function esAdmin() {
@@ -419,7 +419,40 @@ function indicesDe(hoja) {
 }
 
 /** Devuelve { hoja, numeroFila, indices, datos } o null. */
-function buscarFila(token) {
+function buscarFila(id) {
+  return buscarCon(function (datos) {
+    return datos['ID'] && datos['ID'] === String(id).trim();
+  });
+}
+
+/**
+ * Busca a quién corresponde lo que llega del formulario público. Primero por
+ * DNI, que es lo único que identifica de verdad. Si el alta la abrió RRHH con
+ * un mensaje del jefe puede que todavía no tenga DNI, así que se prueba
+ * también por nombre y apellidos.
+ *
+ * Si no aparece nadie, es un alta que empieza el propio trabajador.
+ */
+function buscarPersona(dni, nombre, apellidos) {
+  const buscadoDni = String(dni || '').trim().toUpperCase();
+  if (buscadoDni) {
+    const porDni = buscarCon(function (datos) {
+      return String(datos.dni).trim().toUpperCase() === buscadoDni;
+    });
+    if (porDni) return porDni;
+  }
+
+  const buscadoNombre = sinAcentos(nombre + ' ' + apellidos);
+  if (!buscadoNombre) return null;
+  return buscarCon(function (datos) {
+    // Solo vale para filas que aún no tienen DNI: con DNI manda el DNI, y
+    // dos personas pueden llamarse igual.
+    if (String(datos.dni).trim()) return false;
+    return sinAcentos(datos.nombre + ' ' + datos.apellidos) === buscadoNombre;
+  });
+}
+
+function buscarCon(coincide) {
   const hoja = hojaTrabajadores();
   if (hoja.getLastRow() < 2) return null;
 
@@ -427,13 +460,9 @@ function buscarFila(token) {
   const filas = hoja.getRange(2, 1, hoja.getLastRow() - 1, hoja.getLastColumn()).getValues();
 
   for (let i = 0; i < filas.length; i++) {
-    if (String(filas[i][indices['Token']]).trim() === String(token).trim()) {
-      return {
-        hoja: hoja,
-        numeroFila: i + 2,
-        indices: indices,
-        datos: filaAObjeto(filas[i], indices),
-      };
+    const datos = filaAObjeto(filas[i], indices);
+    if (coincide(datos)) {
+      return { hoja: hoja, numeroFila: i + 2, indices: indices, datos: datos };
     }
   }
   return null;
@@ -509,7 +538,7 @@ function listarAltas() {
   const lista = filas.map(function (fila) {
     const datos = filaAObjeto(fila, indices);
     return {
-      token: datos['Token'],
+      id: datos['ID'],
       etiqueta: [datos.nombre, datos.apellidos].filter(String).join(' ').trim() ||
         '(sin nombre)',
       dni: datos.dni,
@@ -517,7 +546,7 @@ function listarAltas() {
       fichaGenerada: !!datos['Ficha gestoría'],
       enHolded: !!datos['Holded'],
     };
-  }).filter(function (t) { return t.token; });
+  }).filter(function (t) { return t.id; });
 
   lista.reverse();
   return lista;
@@ -531,16 +560,22 @@ function crearAlta(datos) {
   soloAdmin();
   validar(datos, OBLIGATORIOS_ALTA);
 
+  return { id: nuevaFila(datos, String(datos.carpeta || '').trim()) };
+}
+
+/**
+ * Crea la fila y la carpeta. Lo usan las tres puertas de entrada: el panel,
+ * el formulario público y la importación de las respuestas antiguas.
+ */
+function nuevaFila(datos, nombreCarpeta) {
   const hoja = hojaTrabajadores();
   const indices = indicesDe(hoja);
-  const token = Utilities.getUuid();
+  const id = Utilities.getUuid();
   const ahora = new Date();
-
-  const nombreCarpeta = String(datos.carpeta || '').trim() || nombreCarpetaPropuesto(datos);
-  const carpeta = carpetaDelTrabajador(nombreCarpeta);
+  const carpeta = carpetaDelTrabajador(nombreCarpeta || nombreCarpetaPropuesto(datos));
 
   const valores = new Array(hoja.getLastColumn()).fill('');
-  valores[indices['Token']] = token;
+  valores[indices['ID']] = id;
   valores[indices['Creado']] = ahora;
   valores[indices['Actualizado']] = ahora;
   valores[indices['Carpeta']] = carpeta.getName();
@@ -552,24 +587,20 @@ function crearAlta(datos) {
   valores[indices['Estado']] = estadoDe(datos);
 
   hoja.appendRow(valores);
-  return { token: token, enlace: enlaceDelTrabajador(token), carpeta: carpeta.getName() };
+  return id;
 }
 
-function cargarAlta(token) {
+function cargarAlta(id) {
   soloAdmin();
-  const fila = buscarFila(token);
+  const fila = buscarFila(id);
   if (!fila) throw new Error('Ese alta ya no existe.');
-  return {
-    datos: fila.datos,
-    falta: loQueFalta(fila.datos),
-    enlace: enlaceDelTrabajador(token),
-  };
+  return { datos: fila.datos, falta: loQueFalta(fila.datos) };
 }
 
 /** Guarda los cambios que hace RRHH. Puede tocar todos los campos. */
-function guardarAlta(token, datos) {
+function guardarAlta(id, datos) {
   soloAdmin();
-  const fila = buscarFila(token);
+  const fila = buscarFila(id);
   if (!fila) throw new Error('Ese alta ya no existe.');
 
   const fusionados = {};
@@ -599,9 +630,9 @@ function guardarAlta(token, datos) {
  * renombra para que todas las carpetas se lean igual; el resto conserva su
  * nombre.
  */
-function subirDocumento(token, archivo, esIdentidad) {
+function subirDocumento(id, archivo, esIdentidad) {
   soloAdmin();
-  const fila = buscarFila(token);
+  const fila = buscarFila(id);
   if (!fila) throw new Error('Ese alta ya no existe.');
 
   const carpeta = DriveApp.getFolderById(fila.datos['Carpeta ID']);
@@ -616,27 +647,41 @@ function subirDocumento(token, archivo, esIdentidad) {
   return { nombre: guardado, carpetaUrl: carpeta.getUrl() };
 }
 
-function enlaceDelTrabajador(token) {
-  return ScriptApp.getService().getUrl() + '?t=' + token;
-}
-
-
 // =====================================================================
 // FORMULARIO DEL TRABAJADOR
 //
-// Solo toca su propia fila y solo los campos personales: lo del contrato,
-// el salario incluido, ni se le enseña ni se le acepta.
+// Un solo formulario para todos, sin enlaces personales. Cada quien se
+// identifica con su DNI y con eso se encuentra su fila.
+//
+// Esta es la única función que puede llamar cualquiera, así que hace lo
+// mínimo: escribe, y no devuelve datos de nadie. Tampoco acepta campos del
+// contrato aunque lleguen en la petición.
 // =====================================================================
 
-function guardarDatosTrabajador(token, datos, archivo) {
-  const fila = buscarFila(token);
-  if (!fila) throw new Error('Este enlace ya no sirve. Pide uno nuevo a Recursos Humanos.');
+function enviarDatosTrabajador(datos, archivo) {
+  const limpios = {};
+  camposDelTrabajador().forEach(function (campo) {
+    limpios[campo.clave] = String(datos[campo.clave] || '').trim();
+  });
+
+  const faltan = loQueFalta(limpios);
+  if (faltan.length) {
+    throw new Error('Faltan datos: ' + faltan.join(', ') + '.');
+  }
+
+  let fila = buscarPersona(limpios.dni, limpios.nombre, limpios.apellidos);
+  let creado = false;
+  if (!fila) {
+    // Nadie había abierto su alta: la abre él al enviar sus datos.
+    const id = nuevaFila(limpios, '');
+    fila = buscarFila(id);
+    creado = true;
+  }
 
   const fusionados = {};
   CAMPOS.forEach(function (campo) {
-    const puedeTocarlo = campo.grupo === 'personal' && !campo.interno;
-    fusionados[campo.clave] = puedeTocarlo && datos[campo.clave] !== undefined
-      ? String(datos[campo.clave]).trim()
+    fusionados[campo.clave] = limpios[campo.clave] !== undefined
+      ? limpios[campo.clave]
       : fila.datos[campo.clave];
   });
 
@@ -653,7 +698,7 @@ function guardarDatosTrabajador(token, datos, archivo) {
   escribirCeldas(fila, celdas);
   avisarDeQueTermino(fusionados, celdas['Estado']);
 
-  return { falta: loQueFalta(fusionados) };
+  return { creado: creado };
 }
 
 function avisarDeQueTermino(datos, estado) {
@@ -713,9 +758,9 @@ function nombreCarpetaPropuesto(datos) {
 // piden con prisa y pocos datos.
 // =====================================================================
 
-function generarFichaGestoria(token) {
+function generarFichaGestoria(id) {
   soloAdmin();
-  const fila = buscarFila(token);
+  const fila = buscarFila(id);
   if (!fila) throw new Error('Ese alta ya no existe.');
 
   validar(fila.datos, OBLIGATORIOS_GESTORIA);
@@ -846,9 +891,9 @@ function conCamposDerivados(datos) {
 //   - altaEnHolded: crea el empleado por API, sin pasar por el Excel.
 // =====================================================================
 
-function acumularFilaHolded(token) {
+function acumularFilaHolded(id) {
   soloAdmin();
-  const registro = buscarFila(token);
+  const registro = buscarFila(id);
   if (!registro) throw new Error('Ese alta ya no existe.');
   validar(registro.datos, OBLIGATORIOS_HOLDED);
 
@@ -927,9 +972,9 @@ const HOLDED_API = {
   cabecera: 'key',
 };
 
-function altaEnHolded(token) {
+function altaEnHolded(id) {
   soloAdmin();
-  const registro = buscarFila(token);
+  const registro = buscarFila(id);
   if (!registro) throw new Error('Ese alta ya no existe.');
   validar(registro.datos, OBLIGATORIOS_HOLDED);
 
@@ -1061,7 +1106,7 @@ function importarRespuestasAntiguas() {
 
     const carpeta = carpetaDelTrabajador(nombreCarpetaPropuesto(datos));
     const valores = new Array(hoja.getLastColumn()).fill('');
-    valores[indices['Token']] = Utilities.getUuid();
+    valores[indices['ID']] = Utilities.getUuid();
     valores[indices['Creado']] = new Date();
     valores[indices['Actualizado']] = new Date();
     valores[indices['Estado']] = estadoDe(datos);
