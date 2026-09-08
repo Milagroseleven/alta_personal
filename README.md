@@ -85,7 +85,7 @@ en Drive:
 
 | Pestaña | Qué tiene |
 | --- | --- |
-| `Trabajadores` | Una fila por alta. Las columnas de control (token, estado, fechas, carpeta) y una columna por cada campo. |
+| `Trabajadores` | Una fila por alta. Las columnas de control (ID interno, estado, fechas, carpeta) y una columna por cada campo. |
 | `Lote Holded` | Las 26 columnas del importador, listas para exportar y subir. |
 
 La columna **Estado** se recalcula sola en cada guardado: dice `Completo` o
